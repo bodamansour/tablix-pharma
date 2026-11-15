@@ -1,11 +1,11 @@
-// Staging can never reach a real outside service: no WhatsApp message to a patient, no AI call — even if such a
-// credential were set on the staging Worker by mistake. Production behaviour is unchanged.
+// Staging reaches only Google's public signing keys: no WhatsApp message or AI call, even if credentials
+// were set on the staging Worker by mistake. Production behaviour is unchanged.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { isStaging, isolateEnv, guardedFetch, OUTSIDE_SERVICE_SECRETS, STAGING_ENV_ALLOWLIST, STAGING_FETCH } from '../worker/src/egress.js';
+import { isStaging, isolateEnv, guardedFetch, OUTSIDE_SERVICE_SECRETS, STAGING_ENV_ALLOWLIST, STAGING_FETCH, GOOGLE_CERTS } from '../worker/src/egress.js';
 import { OUTSIDE_SERVICE_VARS } from '../worker/scripts/staging-guard.mjs';
 import { runReminders } from '../src/reminders-job.js';
 import { runMorning } from '../src/morning-job.js';
@@ -39,6 +39,25 @@ test('staging: outbound requests from the jobs are refused; production passes th
   assert.deepEqual(calls, []);
   assert.equal((await guardedFetch(PROD_ENV, spy)('https://example.org/x')).status, 200);
   assert.deepEqual(calls, ['https://example.org/x']);
+});
+
+test('staging permits only a plain GET of Google public signing keys', async () => {
+  const calls = [];
+  const spy = async (u) => { calls.push(u); return new Response('{}'); };
+  assert.equal((await guardedFetch(STAGING_ENV, spy)(GOOGLE_CERTS)).status, 200);
+  for (const [url, init] of [[GOOGLE_CERTS, { headers: { Authorization: 'secret' } }],
+    [GOOGLE_CERTS + '?q=secret', undefined], ['https://accounts.google.com', undefined]]) {
+    assert.equal((await guardedFetch(STAGING_ENV, spy)(url, init)).status, 403);
+  }
+  assert.deepEqual(calls, [GOOGLE_CERTS]);
+  assert.ok(STAGING_ENV_ALLOWLIST.includes('GOOGLE_CLIENT_ID'));
+  const staged = { ...STAGING_ENV, GOOGLE_CLIENT_ID: 'staging-test.apps.googleusercontent.com' };
+  const realFetch = globalThis.fetch;
+  try {
+    assert.equal(isolateEnv(staged).GOOGLE_CLIENT_ID, staged.GOOGLE_CLIENT_ID);
+    assert.equal((await guardedFetch(staged, guardedFetch(staged, spy))(GOOGLE_CERTS)).status, 200);
+    assert.deepEqual(calls, [GOOGLE_CERTS, GOOGLE_CERTS]);
+  } finally { globalThis.fetch = realFetch; }
 });
 
 // The real job code, wired the way worker/src/index.js wires it: internal:// answered locally, the rest through
@@ -143,7 +162,7 @@ test('every outbound call in the Worker goes through an injected or guarded fetc
   assert.match(index, /aiInvoice\(env, await contextOf\(env, req\), req, \{ fetchImpl: guardedFetch\(env\) \}\)/, '/api/ai/invoice gets guardedFetch');
 });
 
-test('staging: the global fetch refuses http and https (the real fetch is never called); production keeps the real fetch', async () => {
+test('staging: the global fetch refuses other http and https requests; production keeps the real fetch', async () => {
   const realFetch = globalThis.fetch;
   const calls = [];
   const spy = async (u) => { calls.push(String(u)); return new Response('{}', { status: 200 }); };

@@ -46,6 +46,7 @@ export const STAGING = Object.freeze({
   cron: '*/30 * * * *',
   sealCron: '15 * * * *',
   urlHost: /^https:\/\/tablix-staging\.[a-z0-9-]+\.workers\.dev$/,
+  googleClientId: '184002310002-ldg2gjnsku0s2uc24q5v0tol1379kldg.apps.googleusercontent.com',
 });
 // Production, fixed here on purpose (not only read from wrangler.toml, so editing the file can't move the target).
 export const PRODUCTION = Object.freeze({
@@ -62,7 +63,6 @@ export const OUTSIDE_SERVICE_VARS = Object.freeze([
   'ANTHROPIC_API_KEY', 'AI_MODEL',
   'RESEND_API_KEY', 'EMAIL_FROM', 'EMAIL_OUTBOX',
   'PAYMOB_SECRET_KEY', 'PAYMOB_PUBLIC_KEY', 'PAYMOB_INTEGRATION_IDS', 'PAYMOB_HMAC',
-  'GOOGLE_CLIENT_ID',
 ]);
 
 class GuardError extends Error {}
@@ -178,6 +178,7 @@ export function checkConfig(text) {
   const known = new Set(['env.staging', 'env.staging.vars', 'env.staging.d1_databases', 'env.staging.r2_buckets', 'env.staging.triggers', 'env.staging.observability']);
   for (const t of cfg.tables.filter((t) => t._table.startsWith('env.staging') && !known.has(t._table))) problems.push(`unreviewed staging section [${t._table}]`);
   no(!STAGING.urlHost.test(vars.SITE_URL || ''), `staging SITE_URL is ${vars.SITE_URL}`);
+  no(vars.GOOGLE_CLIENT_ID !== STAGING.googleClientId, 'staging Google client ID changed');
 
   // Schedules: staging must declare its own triggers (otherwise it inherits production's morning report and
   // reminders), with only the backup and hourly audit cron, and BACKUP_CRON must match.

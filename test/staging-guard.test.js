@@ -219,6 +219,8 @@ test('config: staging schedules only backup and hourly sealing, and BACKUP_CRON 
     'an AI key in staging vars': staging((p) => p.replace('DEPLOY_ENV = "staging"', 'DEPLOY_ENV = "staging"\nANTHROPIC_API_KEY = "x"')),
   };
   for (const [what, text] of Object.entries(marker)) assert.ok(checkConfig(text).some((p) => /DEPLOY_ENV|must not set/.test(p)), what);
+  assert.ok(checkConfig(staging((p) => p.replace(STAGING.googleClientId, 'another.apps.googleusercontent.com')))
+    .some((p) => /staging Google client ID changed/.test(p)));
   assert.deepEqual(checkConfig(toml), []);
 });
 

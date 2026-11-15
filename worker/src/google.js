@@ -1,8 +1,7 @@
 // Verify Google's ID token before it can identify an account. Email alone never links accounts.
 import { ApiError } from './db.js';
-import { guardedFetch } from './egress.js';
+import { guardedFetch, GOOGLE_CERTS } from './egress.js';
 
-const CERTS = 'https://www.googleapis.com/oauth2/v3/certs';
 let cached = { keys: [], until: 0 };
 const invalid = () => new ApiError('Google sign-in failed', 'google_invalid', 401);
 const bytes = (part) => {
@@ -31,7 +30,7 @@ export async function verifyGoogleToken(env, credential, fetchImpl) {
     || typeof claims.sub !== 'string' || !/^[\x21-\x7e]{1,255}$/.test(claims.sub)) throw invalid();
   if (Date.now() >= cached.until || !cached.keys.some((k) => k.kid === header.kid)) {
     let response;
-    try { response = await guardedFetch(env, fetchImpl)(CERTS); }
+    try { response = await guardedFetch(env, fetchImpl)(GOOGLE_CERTS); }
     catch { throw new ApiError('Google sign-in is temporarily unavailable', 'google_unavailable', 503); }
     if (!response.ok) throw new ApiError('Google sign-in is temporarily unavailable', 'google_unavailable', 503);
     const raw = await response.text();

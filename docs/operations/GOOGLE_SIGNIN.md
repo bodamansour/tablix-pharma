@@ -3,7 +3,7 @@
 ## التفعيل
 
 1. في Google Cloud، أنشئ OAuth consent screen وعميل OAuth من نوع **Web application**. أضف عنوان الموقع الفعلي إلى **Authorized JavaScript origins**. استخدم **Client ID** فقط؛ لا يحتاج التطبيق إلى Client Secret.
-2. طبّق ترحيل قاعدة البيانات `0019_google_signin.sql`، ثم اضبط `GOOGLE_CLIENT_ID` في Worker على قيمة Web Client ID. لا تضبطه في staging إلا بعد إعداد أصل staging المصرّح له واختبار المسار هناك؛ حارس staging الحالي يزيل هذه القيمة عمدًا.
+2. طبّق ترحيل قاعدة البيانات `0019_google_signin.sql`، ثم اضبط `GOOGLE_CLIENT_ID` في Worker على قيمة Web Client ID. في staging، المعرّف العام موجود في `worker/wrangler.toml` ومربوط بعنوان staging وحده؛ يسمح الحارس بجلب مفاتيح توقيع Google العامة فقط، ويمنع بقية الاتصالات الخارجية.
 3. أندرويد خارج نطاق هذا الفرع. لاحقًا يحتاج عميل OAuth من نوع **Android** بنفس مشروع Google Cloud، باسم الحزمة `com.saydaliti.saydaliti_app` وبصمة SHA-1 لمفتاح توقيع APK ثابت.
 
 ## سلوك الحساب
