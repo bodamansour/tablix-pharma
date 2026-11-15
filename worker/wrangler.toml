@@ -59,6 +59,7 @@ MORNING_CRON = "0 6 * * *"
 BACKUP_CRON = "*/30 * * * *"
 PBKDF2_ITER = "10000"
 SITE_URL = "https://tablix-staging.tablixpharma.workers.dev"
+GOOGLE_CLIENT_ID = "184002310002-ldg2gjnsku0s2uc24q5v0tol1379kldg.apps.googleusercontent.com"
 # The test suites create many accounts.
 SIGNUP_PER_HOUR = "10000"
 SEAL_BUDGET = "150"
