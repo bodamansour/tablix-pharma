@@ -125,6 +125,55 @@ test('competing seals based on the same parent cannot both enter D1', async () =
   assert.equal(DB.raw.prepare('SELECT count(*) AS n FROM audit_seals WHERE pharmacy_id = ?').get(P).n, 1);
 });
 
+test('a run that stopped between the R2 copy and D1 is resumed: the copy goes into D1 only if the rows reproduce it', async () => {
+  for (const tamper of [false, true]) {
+    const { DB, env, FILES, add } = setup(10), e = env();
+    if (tamper) { await sealAudit(e, P); add(5); }
+    // The run writes its immutable copy to R2, then stops before the seal reaches D1.
+    const prepare = DB.prepare;
+    DB.prepare = (sql) => { if (sql.startsWith('INSERT INTO audit_seals')) throw new Error('stopped'); return prepare(sql); };
+    await assert.rejects(sealAudit(e, P));
+    DB.prepare = prepare;
+    const copies = [...FILES.map.keys()].filter((k) => k.startsWith(`audit-anchor-history/${P}/`));
+    assert.equal(copies.length, tamper ? 2 : 1, 'the copy is left in R2');
+    if (tamper) {
+      unlock(DB);
+      DB.exec(`UPDATE audit_log SET new_row = '{"name":"edited"}' WHERE id = 13`);
+      await assert.rejects(sealAudit(e, P), (err) => err.code === 'audit_anchor_evidence_conflict', 'changed rows do not reproduce the copy');
+      assert.equal(DB.raw.prepare('SELECT count(*) AS n FROM audit_seals').get().n, 1);
+      continue;
+    }
+    // The next run puts that seal into D1 (nothing stuck), and later runs go on as usual.
+    assert.deepEqual(await sealAudit(e, P), { sealed: 10, left: false, epoch: 0 });
+    add(4);
+    assert.deepEqual(await sealAudit(e, P), { sealed: 4, left: false, epoch: 0 });
+    const v = await verifyAudit(e, P);
+    assert.equal(v.ok, true); assert.equal(v.rows, 14);
+  }
+});
+
+test('the copy of a competing run that lost, ahead of the winner, is taken up by the next run', async () => {
+  const { DB, env } = setup(10), e = env();
+  const prepare = DB.prepare; let arrivals = 0, release;
+  const barrier = new Promise((resolve) => { release = resolve; });
+  DB.prepare = (sql) => {
+    const statement = prepare(sql);
+    if (!sql.startsWith('INSERT INTO audit_seals')) return statement;
+    return { bind: (...args) => {
+      const bound = statement.bind(...args);
+      // The run sealing 3 rows goes in first; the one sealing 7 loses, its copy already in R2.
+      return { ...bound, run: async () => { const me = ++arrivals; if (me === 2) release(); await barrier; if (args[2] === 7) await new Promise((r) => setTimeout(r, 5)); return bound.run(); } };
+    } };
+  };
+  const results = await Promise.allSettled([sealAudit(e, P, { maxRows: 3 }), sealAudit(e, P, { maxRows: 7 })]);
+  DB.prepare = prepare;
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  const r = await sealAudit(e, P);
+  assert.equal(r.sealed, 4, 'the lost run\'s seal (rows 4-7) is taken up');
+  assert.deepEqual(await sealAudit(e, P), { sealed: 3, left: false, epoch: 0 });
+  assert.equal((await verifyAudit(e, P)).ok, true);
+});
+
 test('a missing current anchor is never restored by the hourly job; the owner restores it from the matching immutable copy', async () => {
   const { DB, env, FILES } = setup(10), e = env();
   await sealAudit(e, P);
