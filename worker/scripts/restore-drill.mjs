@@ -14,7 +14,7 @@ import { join, resolve, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { getPlatformProxy } from 'wrangler';
-import { runBackup, decryptBackup, restoreInto, verifyRestore, backupHealth, RETAIN } from '../src/backup.js';
+import { runBackup, decryptBackup, restoreInto, verifyRestore, backupHealth, RETAIN, loadBlobFiles } from '../src/backup.js';
 import { wranglerBin } from './staging-guard.mjs';
 
 const WORKER = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,7 +40,7 @@ try {
   report.backup = { ms: Date.now() - t, bytes: b.bytes, sha256: b.sha256, rows: Object.values(b.counts).reduce((a, n) => a + n, 0) };
   t = Date.now();
   const file = await (await src.env.FILES.get(b.key)).arrayBuffer();
-  const dump = JSON.parse(await decryptBackup(src.env, pick.id, file));
+  const dump = await loadBlobFiles(src.env, pick.id, JSON.parse(await decryptBackup(src.env, pick.id, file)));
   report.open_ms = Date.now() - t;
   t = Date.now();
   report.restored = await restoreInto(dst.env, dump);

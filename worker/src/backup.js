@@ -31,7 +31,8 @@ const keyCol = (table) => (Array.isArray(TABLES[table].pk) ? TABLES[table].pk : 
 async function rowsOf(env, sql, ...args) { return (await env.DB.prepare(sql).bind(...args).all()).results; }
 
 // The pharmacy as stored: raw column values (JSON stays text), so a restore writes back exactly the same.
-export async function dumpPharmacy(env, pharmacyId) {
+// With { blobs: false } the uploaded files are left out (runBackup stores each one as its own encrypted file).
+export async function dumpPharmacy(env, pharmacyId, { blobs: withBlobs = true } = {}) {
   const ph = await rowsOf(env, 'SELECT * FROM pharmacies WHERE id = ?', pharmacyId);
   if (!ph.length) throw new ApiError('pharmacy not found', '404', 404);
   const tables = { pharmacies: ph, members: await rowsOf(env, 'SELECT * FROM members WHERE pharmacy_id = ?', pharmacyId) };
@@ -43,7 +44,7 @@ export async function dumpPharmacy(env, pharmacyId) {
   }
   // The uploaded files (R2) the snapshot rows point to.
   const blobs = {};
-  for (const s of tables.snapshots) { const o = await env.FILES.get(`snapshots/${s.id}.json`); if (o) blobs[`snapshots/${s.id}.json`] = await o.text(); }
+  if (withBlobs) for (const s of tables.snapshots) { const o = await env.FILES.get(`snapshots/${s.id}.json`); if (o) blobs[`snapshots/${s.id}.json`] = await o.text(); }
   return { app: 'saydaliti', kind: 'server-backup', version: 1, pharmacy_id: pharmacyId, created_at: nowIso(), tables, blobs };
 }
 
@@ -61,7 +62,7 @@ export async function summarize(dump) {
   const stock = {};
   for (const r of t.stock_ledger || []) { const k = `${r.branch_id}|${r.code}`; stock[k] = Math.round(((stock[k] || 0) + (+r.applied || 0)) * 1e6) / 1e6; }
   return {
-    counts, hashes, blobs: Object.keys(dump.blobs || {}).length,
+    counts, hashes, blobs: Object.keys(dump.blobs || {}).length || (dump.blob_files || []).length,
     money: {
       sales: sum(t.pos_sales || [], 'total', (r) => r.kind === 'sale'), returns: sum(t.pos_sales || [], 'total', (r) => r.kind === 'return'),
       purchases: sum(t.purchases || [], 'total', (r) => r.kind !== 'return'), supplier_returns: sum(t.purchases || [], 'total', (r) => r.kind === 'return'),
@@ -117,15 +118,58 @@ export async function decryptBackup(env, pharmacyId, bytes) {
 export async function keyIdOfFile(bytes) { const b = new Uint8Array(bytes); return dec.decode(b.slice(0, 5)) === 'SDBK2' ? hex(b.slice(5, 13)) : null; }
 
 // ---------- One backup: make, encrypt, store, list, keep the newest RETAIN ----------
+// The uploaded files (the stock snapshots from the United program: tens of thousands of items each) are
+// stored one at a time, each in its own encrypted file next to the backup, and the backup lists them with
+// their checksums. Put inside the backup's JSON, a pharmacy with a few of them went past the Worker's 128 MB
+// of memory and the daily backup never finished (production, 2026-10-28 to 2026-11-18). Each file is checked
+// after writing by reading it back and comparing its bytes.
+const blobKey = (key, i) => `${key}.f${i}`;
+async function storeBlobs(env, pharmacyId, key, snapshots) {
+  const files = [];
+  for (const s of snapshots) {
+    const name = `snapshots/${s.id}.json`;
+    const o = await env.FILES.get(name);
+    if (!o) continue;
+    let text = await o.text();
+    const sha = await sha256hex(text);
+    let file = await encryptBackup(env, pharmacyId, text);
+    text = null;
+    const at = blobKey(key, files.length);
+    const fileSha = await sha256hex(file);
+    await env.FILES.put(at, file, { httpMetadata: { contentType: 'application/octet-stream' }, customMetadata: { sha256: sha, pharmacy: pharmacyId } });
+    const bytes = file.length;
+    file = null;
+    const back = await env.FILES.get(at);
+    if (!back || (await sha256hex(await back.arrayBuffer())) !== fileSha) throw new Error(`backup check after writing ${name} failed`);
+    files.push({ name, key: at, sha256: sha, bytes });
+  }
+  return files;
+}
+
+/** The uploaded files of a backup made with separate files, read back and opened (for a restore). */
+export async function loadBlobFiles(env, pharmacyId, dump) {
+  const blobs = { ...(dump.blobs || {}) };
+  for (const f of dump.blob_files || []) {
+    if (!/^snapshots\/\d+\.json$/.test(f.name)) throw new ApiError('bad file in backup');
+    const o = await env.FILES.get(f.key);
+    if (!o) throw new ApiError(`backup file missing: ${f.name}`);
+    const text = await decryptBackup(env, pharmacyId, await o.arrayBuffer());
+    if ((await sha256hex(text)) !== f.sha256) throw new ApiError(`backup file differs: ${f.name}`);
+    blobs[f.name] = text;
+  }
+  return { ...dump, blobs, blob_files: undefined };
+}
+
 export async function runBackup(env, pharmacyId, { by = null, source = 'manual' } = {}) {
   const id = uuid(), at = nowIso();
+  const key = `backups/${pharmacyId}/${at.replace(/[:.]/g, '-')}-${id.slice(0, 8)}.sdbk`;
   try {
-    const dump = await dumpPharmacy(env, pharmacyId);
+    const dump = await dumpPharmacy(env, pharmacyId, { blobs: false });
+    dump.blob_files = await storeBlobs(env, pharmacyId, key, dump.tables.snapshots);
     const text = JSON.stringify(dump);
     const sha = await sha256hex(text);
     const summary = await summarize(dump);
     const file = await encryptBackup(env, pharmacyId, text);
-    const key = `backups/${pharmacyId}/${at.replace(/[:.]/g, '-')}-${id.slice(0, 8)}.sdbk`;
     await env.FILES.put(key, file, { httpMetadata: { contentType: 'application/octet-stream' }, customMetadata: { sha256: sha, pharmacy: pharmacyId } });
     // Read it back and open it before listing it as good: a file that was only written is not a backup.
     const back = await env.FILES.get(key);
@@ -135,6 +179,8 @@ export async function runBackup(env, pharmacyId, { by = null, source = 'manual' 
     await prune(env, pharmacyId);
     return { id, key, bytes: file.length, sha256: sha, counts: summary.counts };
   } catch (e) {
+    // Files of a backup that did not finish are not kept (best effort; never listed as a backup).
+    try { const page = env.FILES.list ? await env.FILES.list({ prefix: `${key}.f` }) : null; const ks = (page?.objects || []).map((x) => x.key); if (ks.length) await env.FILES.delete(ks); } catch { /* nothing more to do */ }
     await env.DB.prepare('INSERT INTO backups (id, pharmacy_id, created_at, status, error, created_by, source) VALUES (?, ?, ?, ?, ?, ?, ?)')
       .bind(id, pharmacyId, at, 'failed', String(e?.message || e).slice(0, 500), by, source).run().catch(() => {});
     throw e;
@@ -143,7 +189,13 @@ export async function runBackup(env, pharmacyId, { by = null, source = 'manual' 
 async function prune(env, pharmacyId) {
   const old = await rowsOf(env, "SELECT id, r2_key FROM backups WHERE pharmacy_id = ? AND status = 'ok' ORDER BY created_at DESC LIMIT -1 OFFSET ?", pharmacyId, RETAIN);
   if (!old.length) return;
-  await env.FILES.delete(old.map((o) => o.r2_key));
+  // The backup's file and its separate uploaded files (`<key>.f0`, `.f1`, ...).
+  const keys = [];
+  for (const o of old) {
+    keys.push(o.r2_key);
+    if (env.FILES.list) { let cursor; do { const page = await env.FILES.list({ prefix: `${o.r2_key}.f`, ...(cursor ? { cursor } : {}) }); for (const x of page.objects || []) keys.push(x.key); cursor = page.truncated ? page.cursor : null; } while (cursor); }
+  }
+  for (let i = 0; i < keys.length; i += 1000) await env.FILES.delete(keys.slice(i, i + 1000));
   await env.DB.prepare(`UPDATE backups SET status = 'expired' WHERE id IN (${old.map(() => '?').join(', ')})`).bind(...old.map((o) => o.id)).run();
 }
 
