@@ -523,6 +523,13 @@ test('security headers are sent, and no page or tab breaks the Content-Security-
   assert.doesNotMatch(csp.split('style-src')[1].split(';')[0], /unsafe-inline/, 'no inline styles allowed');
   assert.equal(h.get('x-frame-options'), 'SAMEORIGIN');
   assert.equal(h.get('x-content-type-options'), 'nosniff');
+  assert.doesNotMatch(csp, /accounts\.google\.com/, 'Google\'s script is only in the button\'s own page');
+  // Google's button page: only it allows inline styles (Google's script adds them), with nothing else to read.
+  const g = await fetch(`${BASE}/google-button.html?client=1-x.apps.googleusercontent.com`);
+  const gcsp = g.headers.get('content-security-policy') || '';
+  for (const d of ["default-src 'none'", "frame-ancestors 'self'", "script-src 'self' https://accounts.google.com/gsi/client"]) assert.ok(gcsp.includes(d), `button page CSP has ${d}`);
+  assert.doesNotMatch(gcsp.split('script-src')[1].split(';')[0], /unsafe-inline|unsafe-eval/, 'no inline scripts on the button page either');
+  assert.equal((gcsp.match(/default-src/g) || []).length, 1, 'one policy, not the site\'s policy too');
   const api = (await fetch(`${BASE}/api/config`)).headers.get('content-security-policy');
   assert.equal(api, "default-src 'none'; frame-ancestors 'none'");
   // Every section and tab of the dashboard, the cashier and the other pages, as the owner.

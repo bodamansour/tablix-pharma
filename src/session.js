@@ -7,25 +7,24 @@ import { clearLocal, setAlwaysOnline } from './offline.js';
 export const ROLE_LABEL = { owner: 'صاحب الصيدلية', partner: 'شريك', device: 'جهاز الصيدلية', pharmacist: 'صيدلي', accountant: 'محاسب', stock: 'مسؤول مخزن' };
 let client = null;
 let googleClientId = null;
-let googleScript = null;
 export const googleReady = () => !!(googleClientId && client?.auth?.signInWithGoogle);
-export function googleButton(target, callback) {
+// Google's button runs in its own small page in a frame (google-button.html), so its inline styles stay
+// out of the app's pages and their strict Content-Security-Policy. The credential comes back by message,
+// from that frame and this same site only.
+export function googleButton(target, callback, { text = 'signin_with' } = {}) {
   if (!googleReady()) return;
-  googleScript ||= new Promise((resolve, reject) => {
-    if (window.google?.accounts?.id) return resolve();
-    const script = document.createElement('script');
-    script.src = 'https://accounts.google.com/gsi/client';
-    script.async = true;
-    script.onload = resolve;
-    script.onerror = () => { googleScript = null; reject(new Error('تعذر تحميل زر جوجل. جرّب تاني.')); };
-    document.head.append(script);
-  });
-  googleScript.then(() => {
-    if (!target.isConnected) return;
-    target.replaceChildren();
-    window.google.accounts.id.initialize({ client_id: googleClientId, callback: ({ credential }) => callback(credential) });
-    window.google.accounts.id.renderButton(target, { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ar' });
-  }).catch((e) => callback(null, e));
+  const frame = document.createElement('iframe');
+  frame.className = 'google-frame';
+  frame.title = 'الدخول بحساب جوجل';
+  frame.src = `/google-button.html?client=${encodeURIComponent(googleClientId)}&text=${encodeURIComponent(text)}`;
+  const onMessage = (e) => {
+    if (!frame.isConnected) { window.removeEventListener('message', onMessage); return; }
+    if (e.origin !== location.origin || e.source !== frame.contentWindow || e.data?.type !== 'tablix-google') return;
+    if (e.data.credential) callback(String(e.data.credential));
+    else if (e.data.error) callback(null, new Error('تعذر تحميل زر جوجل. جرّب تاني.'));
+  };
+  window.addEventListener('message', onMessage);
+  target.replaceChildren(frame);
 }
 
 const cache = {

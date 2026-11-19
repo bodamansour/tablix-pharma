@@ -1,0 +1,3 @@
+/* The Google button's own page (google-button.html), shown in a small frame on the sign-in page. */
+html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+#button { display: flex; justify-content: center; }

@@ -570,3 +570,6 @@ html.lite th { position: static; }
   radial-gradient(circle closest-side, #06b6d4 84%, transparent 88%) 100% 100% / 50% 50% no-repeat,
   radial-gradient(circle closest-side, #1746d1 84%, transparent 88%) 0 0 / 50% 50%; }
 .gate-points li::before { clip-path: none; border-radius: 50%; width: 8px; height: 8px; }
+
+/* The Google sign-in button's frame (google-button.html). */
+.google-frame { display: block; width: 100%; max-width: 300px; height: 48px; margin: 0 auto; border: 0; background: transparent; color-scheme: normal; }
