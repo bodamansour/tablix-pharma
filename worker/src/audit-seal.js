@@ -100,6 +100,21 @@ function requireCurrentHistory(entries, seal) {
     throw new ApiError('audit anchor history conflicts with D1', 'audit_anchor_evidence_conflict', 503);
   }
 }
+
+// A seal's immutable copy goes to R2 before its row goes into D1 (insertSeal). When the D1 insert never
+// happens (the run stopped in between, or a competing run won), the copy is left ahead of D1, and without
+// this every later run stopped on it for good. Such a copy is the next seal only if the log's rows, from
+// D1's latest seal up to it, produce exactly its hash, row count and key: then it is the seal that was
+// meant to go in, and the hourly job puts it into D1. Anything else ahead of D1 (another epoch, or a copy the
+// rows don't reproduce, as after rows were changed or seals removed) stays evidence, and sealing stays stopped.
+function pendingHistory(entries, seal) {
+  const epoch = seal?.epoch ?? 0, upto = seal?.upto_id ?? 0;
+  const ahead = entries.filter((e) => e.epoch > epoch || (e.epoch === epoch && e.upto > upto));
+  const rest = entries.filter((e) => !ahead.includes(e));
+  requireCurrentHistory(rest, seal);
+  if (ahead.some((e) => e.epoch !== epoch)) throw new ApiError('audit anchor history conflicts with D1', 'audit_anchor_evidence_conflict', 503);
+  return ahead.sort((a, b) => a.upto - b.upto)[0] ?? null;
+}
 const parentSeal = (env, p, s) => env.DB.prepare('SELECT epoch, upto_id, rows, hash, key_id, created_at FROM audit_seals WHERE pharmacy_id = ? AND epoch = ? AND upto_id < ? ORDER BY upto_id DESC LIMIT 1').bind(p, s.epoch, s.upto_id).first();
 const latestSeal = (env, p) => env.DB.prepare('SELECT epoch, upto_id, rows, hash, key_id, created_at FROM audit_seals WHERE pharmacy_id = ? ORDER BY epoch DESC, upto_id DESC LIMIT 1').bind(p).first();
 const logCountAfter = async (env, p, id) => (await env.DB.prepare('SELECT count(*) AS n FROM audit_log WHERE pharmacy_id = ? AND id > ?').bind(p, id).first())?.n ?? 0;
@@ -298,7 +313,20 @@ export async function sealAudit(env, pharmacyId, { maxRows = 2000 } = {}) {
   if (!k) return { sealed: 0, left: false, configured: false };
   if (!env.FILES) throw new ApiError('R2 audit anchor is unavailable', 'audit_anchor_unavailable', 503);
   const latest = await latestSeal(env, pharmacyId);
-  requireCurrentHistory(await historyInventory(env, pharmacyId), latest);
+  const next = pendingHistory(await historyInventory(env, pharmacyId), latest);
+  // The copy left ahead of D1 by a run that stopped: put it into D1 only if the rows reproduce it exactly.
+  // Checked before anything else, so a copy the rows don't reproduce shows as evidence, not as a missing anchor.
+  let adopted = null;
+  if (next) {
+    const copy = await readHistory(env, pharmacyId, { epoch: next.epoch, upto_id: next.upto, hash: next.hash });
+    const v = copy.status === 'present' ? copy.value : null;
+    const c = v && v.key_id === k.id ? await chain(await hmacKey(k.raw), latest?.hash ?? '', rowsAfter(env, pharmacyId, latest?.upto_id ?? 0, next.upto)) : null;
+    if (!c || c.lastId !== next.upto || c.hash !== v.hash || v.rows !== (latest?.rows ?? 0) + c.n || v.epoch !== (latest?.epoch ?? 0)) {
+      throw new ApiError('audit anchor history conflicts with D1', 'audit_anchor_evidence_conflict', 503);
+    }
+    console.warn('AUDIT_SEAL_RESUMED', pharmacyId, next.upto);
+    adopted = v;
+  }
   let anchor = await readAnchor(env, pharmacyId);
   if (latest) {
     if (anchor.status !== 'present' || !sameSeal(anchor.value, latest)) {
@@ -321,9 +349,13 @@ export async function sealAudit(env, pharmacyId, { maxRows = 2000 } = {}) {
     throw new ApiError('audit anchor exists without a D1 seal; preserve it and request owner rebaseline', 'audit_anchor_recovery_required', 503);
   }
   const epoch = latest?.epoch ?? 0, prevId = latest?.upto_id ?? 0, prevHash = latest?.hash ?? '';
-  const { hash, n, lastId } = await chain(await hmacKey(k.raw), prevHash, rowsAfter(env, pharmacyId, prevId, Number.MAX_SAFE_INTEGER, maxRows));
-  if (!n) return { sealed: 0, left: false, epoch };
-  const seal = { epoch, upto_id: lastId, rows: (latest?.rows ?? 0) + n, hash, key_id: k.id, created_at: nowIso() };
+  let seal = adopted;
+  if (!seal) {
+    const { hash, n, lastId } = await chain(await hmacKey(k.raw), prevHash, rowsAfter(env, pharmacyId, prevId, Number.MAX_SAFE_INTEGER, maxRows));
+    if (!n) return { sealed: 0, left: false, epoch };
+    seal = { epoch, upto_id: lastId, rows: (latest?.rows ?? 0) + n, hash, key_id: k.id, created_at: nowIso() };
+  }
+  const n = seal.rows - (latest?.rows ?? 0), lastId = seal.upto_id;
   await insertSeal(env, pharmacyId, seal, anchor, latest);
   return { sealed: n, left: !!(await env.DB.prepare('SELECT 1 FROM audit_log WHERE pharmacy_id = ? AND id > ? LIMIT 1').bind(pharmacyId, lastId).first()), epoch };
 }
