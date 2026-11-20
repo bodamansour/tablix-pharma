@@ -13,6 +13,7 @@
 //
 // The file locations are fixed (imported from the guard); no path is taken from the command line. The key is read
 // from the environment and never printed.
+import '../test/net.mjs'; // a request lost on a connection closed after a long backup is sent once more
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, writeFile, rm, mkdir, lstat } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
