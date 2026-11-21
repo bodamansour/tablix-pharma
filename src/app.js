@@ -163,7 +163,7 @@ function taxNote(A, s) {
   return 'الضرايب مش داخلة في الحسبة. اسأل محاسبك عن نظام صيدليتك وغيّر الاختيار.';
 }
 
-const nameCell = (r, extra = '') => `<td class="name">${esc(r.name)} ${extra}<span class="cat">${esc(r.category)} · ${esc(r.owner)}</span></td>`;
+const nameCell = (r, extra = '') => `<td class="name"><bdi>${esc(r.name)}</bdi> ${extra}<span class="cat">${esc(r.category)} · ${esc(r.owner)}</span></td>`;
 // Long lists show their first rows only (a page of thousands of rows is slow on an older PC);
 // «اعرض كله» shows the rest, for this tab, until the page is opened again.
 const ROWS_SHOWN = 200;
@@ -755,7 +755,7 @@ const posCost = () => { const m = new Map(DATA.items.map((i) => [String(i.code),
 const posWhen = (x) => new Date(x.sold_at).toLocaleString('ar-EG', POS_PERIOD === 'day' ? { hour: 'numeric', minute: '2-digit' } : { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 function posLines(x) {
   return `<tr class="sale-lines"><td colspan="${multi() ? 9 : 8}"><div class="ledger">
-    ${(x.lines || []).map((l) => `<div><span>${esc(l.name)} <span class="muted n">${fmt(l.qty)}${+l.per > 1 ? ` ${unitLabel(l)}` : ''} × ${fmt(l.price, 2)}${l.discount ? ` − ${fmt(l.discount, 2)}` : ''}</span></span><span class="n">${fmt(l.price * l.qty - (l.discount || 0), 2)}</span></div>`).join('')}
+    ${(x.lines || []).map((l) => `<div><span><bdi>${esc(l.name)}</bdi> <span class="muted n">${fmt(l.qty)}${+l.per > 1 ? ` ${unitLabel(l)}` : ''} × ${fmt(l.price, 2)}${l.discount ? ` − ${fmt(l.discount, 2)}` : ''}</span></span><span class="n">${fmt(l.price * l.qty - (l.discount || 0), 2)}</span></div>`).join('')}
     ${+x.discount > (x.lines || []).reduce((a, l) => a + (+l.discount || 0), 0) + 0.004 ? `<div><span>خصم على الفاتورة</span><span class="n">−${fmt(+x.discount - (x.lines || []).reduce((a, l) => a + (+l.discount || 0), 0), 2)}</span></div>` : ''}
     ${x.delivery_fee ? `<div><span>التوصيل</span><span class="n">${fmt(x.delivery_fee, 2)}</span></div>` : ''}
     <div class="tot"><span>${x.kind === 'return' ? 'المرتجع' : 'الإجمالي'}</span><span class="n">${fmt(Math.abs(x.total), 2)}</span></div>
@@ -794,7 +794,7 @@ function renderPosSales() {
     </div></div>`;
   const hours = `<div class="card"><h3>${day ? 'بالساعة' : 'بالساعة (كل الأيام)'}</h3>${R.hours.length ? `<div class="hours">${R.hours.map((h) => `<div class="hr"><span class="n">${hourLabel(h.hour)}</span><span class="bar"><i data-w="${Math.max(2, Math.round((Math.abs(h.net) / maxHour) * 100))}"></i></span><span class="n">${fmt(h.net)}</span><span class="muted n">${fmt(h.receipts)} فاتورة</span></div>`).join('')}</div>` : '<p class="note">مفيش فواتير في الفترة دي.</p>'}</div>`;
   const items = R.items.length ? `<h3>اتباع إيه (${fmt(R.items.length)} صنف)</h3>` + table(['الصنف', 'الكمية', 'فواتير', 'المبيعات', 'المكسب'],
-    R.items.map((i) => `<tr><td class="name">${esc(i.name)}<span class="cat n">${esc(i.code)}</span></td><td class="n"><b>${fmt(i.qty)}</b></td><td class="n">${fmt(i.receipts)}</td><td>${egp(i.value)}</td><td>${i.profit === null ? '<span class="muted">—</span>' : `<span class="pill ${i.profit < 0 ? 'crit' : 'ok'}"><span class="n">${fmt(i.profit)}</span> ج</span>`}</td></tr>`)) : '';
+    R.items.map((i) => `<tr><td class="name"><bdi>${esc(i.name)}</bdi><span class="cat n">${esc(i.code)}</span></td><td class="n"><b>${fmt(i.qty)}</b></td><td class="n">${fmt(i.receipts)}</td><td>${egp(i.value)}</td><td>${i.profit === null ? '<span class="muted">—</span>' : `<span class="pill ${i.profit < 0 ? 'crit' : 'ok'}"><span class="n">${fmt(i.profit)}</span> ج</span>`}</td></tr>`)) : '';
   const rows = list.slice(0, POS_Q || SHOW_ALL.has(TAB) ? 2000 : 200).map((x) => `<tr class="sale-row${POS_OPEN.has(x.id) ? ' open' : ''}" data-sale="${esc(x.id)}" tabindex="0"><td class="n">${esc(x.number)}</td>
       <td class="n">${esc(posWhen(x))}</td>
       ${multi() ? `<td>${esc(branchName(key(x.branch_id)))}</td>` : ''}<td>${x.kind === 'return' ? `<span class="pill ${x.is_void ? 'crit' : 'warn'}">${x.is_void ? 'إلغاء' : 'مرتجع'}</span>${x.return_of ? ` <span class="muted">من ${esc(POS_SALES.find((y) => y.id === x.return_of)?.number ?? 'فاتورة')}</span>` : x.note ? ' <span class="pill crit">من غير فاتورة</span>' : ''}` : POS_SALES.some((y) => y.is_void && y.return_of === x.id) ? 'بيع <span class="pill crit">ملغية</span>' : 'بيع'}</td>
@@ -804,7 +804,7 @@ function renderPosSales() {
     : `<div class="card emptybox"><p>${POS_Q ? 'مفيش فاتورة بالبحث ده.' : 'مفيش فواتير في الفترة دي.'}</p></div>`);
   // Per cashier (only when more than one person sold): who sold how much, the discounts and returns.
   const staff = R.employees.length > 1 || (R.employees[0] && R.employees[0].name !== 'من غير اسم') ? `<h3>أداء الكاشيرز</h3>` + table(['الكاشير', 'فواتير', 'المبيعات', 'متوسط الفاتورة', 'خصومات', 'مرتجعات'],
-    R.employees.map((e) => `<tr><td class="name">${esc(e.name)}</td><td class="n">${fmt(e.receipts)}</td><td>${egp(e.sales)}</td><td>${egp(e.avg)}</td><td>${egp(e.discount)}</td><td class="n">${e.returns ? `${fmt(e.returns)} · ${fmt(e.returned, 2)}` : '—'}</td></tr>`)) : '';
+    R.employees.map((e) => `<tr><td class="name"><bdi>${esc(e.name)}</bdi></td><td class="n">${fmt(e.receipts)}</td><td>${egp(e.sales)}</td><td>${egp(e.avg)}</td><td>${egp(e.discount)}</td><td class="n">${e.returns ? `${fmt(e.returns)} · ${fmt(e.returned, 2)}` : '—'}</td></tr>`)) : '';
   return `${controls}<p class="note">دوس على أي فاتورة عشان تشوف أصنافها وتطبعها تاني. الفواتير دي من شاشة الكاشير.</p>
   <div class="calc">${summary}${hours}</div>${POS_PERIOD === 'day' && BRANCH !== 'all' || (POS_PERIOD === 'day' && !multi()) ? dayCloseHtml(R) : ''}${invoices}${items}${staff}`;
 }
@@ -858,7 +858,7 @@ function printPosReport() {
     <table>${row('فواتير', fmt(sum.receipts))}${row('مبيعات', fmt(sum.sales, 2))}${sum.returns ? row(`مرتجعات (${fmt(sum.returns)})`, fmt(sum.returned, 2)) : ''}${row('خصومات', fmt(sum.discount, 2))}
     ${Object.entries(sum.byPayment).map(([k, v]) => row(esc(payName(k)), fmt(v, 2))).join('')}${row('<b>الصافي</b>', `<b>${fmt(sum.net, 2)}</b>`)}${R.profit !== null ? row('المكسب', fmt(R.profit, 2)) : ''}</table>
     <h2>بالساعة</h2><table>${R.hours.map((h) => row(`${hourLabel(h.hour)} · ${fmt(h.receipts)} فاتورة`, fmt(h.net, 2))).join('')}</table>
-    <h2>اتباع إيه</h2><table><tr><th>الصنف</th><th class="n">الكمية</th><th class="n">المبيعات</th><th class="n">المكسب</th></tr>${R.items.map((i) => `<tr><td>${esc(i.name)}</td><td class="n">${fmt(i.qty)}</td><td class="n">${fmt(i.value, 2)}</td><td class="n">${i.profit === null ? '—' : fmt(i.profit, 2)}</td></tr>`).join('')}</table>
+    <h2>اتباع إيه</h2><table><tr><th>الصنف</th><th class="n">الكمية</th><th class="n">المبيعات</th><th class="n">المكسب</th></tr>${R.items.map((i) => `<tr><td><bdi>${esc(i.name)}</bdi></td><td class="n">${fmt(i.qty)}</td><td class="n">${fmt(i.value, 2)}</td><td class="n">${i.profit === null ? '—' : fmt(i.profit, 2)}</td></tr>`).join('')}</table>
   </body></html>`;
   printDoc(html);
 }
@@ -867,7 +867,7 @@ function printSale(id) {
   const x = POS_SALES.find((y) => y.id === id); if (!x) return;
   const ret = x.kind === 'return';
   const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>${esc(x.number)}</title><link rel="stylesheet" href="${new URL('./src/print/receipt.css', location.href)}"></head><body><div class="c"><b>${esc(SESS.pharmacy?.name || '')}</b><div>${ret ? 'مرتجع' : 'فاتورة'} رقم <span class="n">${esc(x.number)}</span> (نسخة)</div><div>${esc(new Date(x.sold_at).toLocaleString('ar-EG'))}</div></div>
-    <table>${(x.lines || []).map((l) => `<tr><td colspan="2">${esc(l.name)}</td></tr><tr><td class="n">${fmt(l.qty)}${+l.per > 1 ? ` ${unitLabel(l)}` : ''} × ${fmt(l.price, 2)}${l.discount ? ` −${fmt(l.discount, 2)}` : ''}</td><td class="n">${fmt(l.price * l.qty - (l.discount || 0), 2)}</td></tr>`).join('')}</table>
+    <table>${(x.lines || []).map((l) => `<tr><td colspan="2"><bdi>${esc(l.name)}</bdi></td></tr><tr><td class="n">${fmt(l.qty)}${+l.per > 1 ? ` ${unitLabel(l)}` : ''} × ${fmt(l.price, 2)}${l.discount ? ` −${fmt(l.discount, 2)}` : ''}</td><td class="n">${fmt(l.price * l.qty - (l.discount || 0), 2)}</td></tr>`).join('')}</table>
     <div class="t">${+x.discount ? `<div><span>الخصم</span><span class="n">${fmt(+x.discount, 2)}</span></div>` : ''}<div class="b"><span>${ret ? 'المرتجع' : 'الإجمالي'}</span><span class="n">${fmt(Math.abs(x.total), 2)}</span></div>
     <div><span>الدفع</span><span>${esc(payName(x.payment))}</span></div>${x.employee_name ? `<div><span>الكاشير</span><span>${esc(x.employee_name)}</span></div>` : ''}</div></body></html>`;
   printDoc(html);
@@ -1353,7 +1353,7 @@ function bindCalc(A, s) {
     }
     const scen = [it.price, it.price * 0.95, it.price * 0.9, floor].filter((x, i, a) => x && a.indexOf(x) === i);
     $('calcOut').innerHTML = `
-      <h3>${esc(it.name)}</h3>
+      <h3><bdi>${esc(it.name)}</bdi></h3>
       <div class="ledger">
         <div><span>سعر البيع</span><span class="n">${fmt(price, 2)}</span></div>
         <div><span>− سعر الشراء</span><span class="n">${fmt(it.cost, 2)}</span></div>
@@ -1440,7 +1440,7 @@ function itemMatches(q) {
 }
 function itemsRows() {
   const list = itemMatches(ITEMS_Q);
-  const rows = list.slice(0, 150).map((i) => `<tr><td class="name">${esc(i.name)}${i.en ? ` <span class="muted" dir="ltr">${esc(i.en)}</span>` : ''}<span class="cat">${i.generic ? `<span dir="ltr">${esc(i.generic)}</span> · ` : ''}${esc(i.category)} · <span class="n">${esc(i.code)}</span></span></td>
+  const rows = list.slice(0, 150).map((i) => `<tr><td class="name"><bdi>${esc(i.name)}</bdi>${i.en ? ` <span class="muted" dir="ltr">${esc(i.en)}</span>` : ''}<span class="cat">${i.generic ? `<span dir="ltr">${esc(i.generic)}</span> · ` : ''}${esc(i.category)} · <span class="n">${esc(i.code)}</span></span></td>
     <td class="n">${i.qty < 0 ? `<span class="pill crit">${fmt(i.qty)}</span>` : i.qty === 0 ? '<span class="muted">خلصان</span>' : `<b>${fmt(i.qty)}</b>`}</td>
     <td class="n">${fmt(i.cost, 2)}</td><td class="n">${fmt(i.price, 2)}${pricesOf(i).filter((p) => Math.abs(p.price - i.price) >= 0.005).map((p) => `<span class="cat">قديم ${fmt(p.price, 2)} × ${fmt(p.qty)}</span>`).join('')}</td><td>${expText(i.expiry)}</td>
     ${canBuy() ? `<td><button class="btn" type="button" data-edititem="${esc(i.code)}">عدّل</button></td>` : ''}</tr>`);
@@ -1600,7 +1600,7 @@ let RCV_NOTE = ''; // result of the last save, kept across re-renders
 const saveDraft = () => store.set(RKEY, RCV);
 
 function receiveLinesHtml() {
-  return RCV.lines.map((l, i) => `<tr><td class="name">${esc(l.name)}<span class="cat n">${esc(l.code)}</span></td>
+  return RCV.lines.map((l, i) => `<tr><td class="name"><bdi>${esc(l.name)}</bdi><span class="cat n">${esc(l.code)}</span></td>
     <td><input class="disc n" type="number" min="0" step="1" data-l="${i}" data-f="qty" value="${esc(l.qty)}" aria-label="الكمية"></td>
     <td><input class="disc n" type="number" min="0" step="1" data-l="${i}" data-f="bonus" value="${esc(l.bonus)}" aria-label="بونص"></td>
     <td><input class="disc n" type="number" min="0" step="0.01" data-l="${i}" data-f="cost" value="${esc(l.cost)}" aria-label="سعر الشراء"></td>
@@ -1672,7 +1672,7 @@ function receiveSearch(enter) {
   const list = r.item ? [r.item] : r.matches.slice(0, 8);
   if (enter && list.length === 1) { $('rcvQ').value = ''; box.hidden = true; addReceiveLine(list[0]); return; }
   box.hidden = false;
-  box.innerHTML = list.map((it, i) => `<button type="button" class="res ${i === 0 ? 'first' : ''}" data-rcvpick="${esc(it.code)}"><span>${esc(it.name)}</span><span class="muted n">رصيد ${fmt(it.qty)} · ${fmt(it.price, 2)} ج</span></button>`).join('')
+  box.innerHTML = list.map((it, i) => `<button type="button" class="res ${i === 0 ? 'first' : ''}" data-rcvpick="${esc(it.code)}"><span><bdi>${esc(it.name)}</bdi></span><span class="muted n">رصيد ${fmt(it.qty)} · ${fmt(it.price, 2)} ج</span></button>`).join('')
     + `<button type="button" class="res" data-rcvnew="1"><span>➕ ضيف «${esc(q.trim())}» كصنف جديد</span></button>`;
   if (enter && list.length > 1) { $('rcvQ').value = ''; box.hidden = true; addReceiveLine(list[0]); }
 }
@@ -1796,7 +1796,7 @@ function adjustForm() {
   return `<form id="adjForm" class="card stack" novalidate>
     <h3>شيل بضاعة من الرصيد${multi() ? ' أو حوّلها لفرع تاني' : ''}</h3>
     <div class="row">${kinds.map(([k, t]) => `<button type="button" class="btn ${ADJ.kind === k ? 'sel' : ''}" data-adjkind="${k}" aria-pressed="${ADJ.kind === k}">${t}</button>`).join('')}</div>
-    ${it ? `<div class="row u-between"><b>${esc(it.name)}</b><span class="muted">الرصيد دلوقتي <b class="n">${fmt(it.qty)}</b></span><button type="button" class="btn" id="adjChange">صنف تاني</button></div>`
+    ${it ? `<div class="row u-between"><b><bdi>${esc(it.name)}</bdi></b><span class="muted">الرصيد دلوقتي <b class="n">${fmt(it.qty)}</b></span><button type="button" class="btn" id="adjChange">صنف تاني</button></div>`
       : `<div class="pos-search"><input id="adjQ" type="search" autocomplete="off" placeholder="امسح باركود الصنف أو اكتب اسمه…" aria-label="الصنف"><div id="adjResults" class="results" hidden></div></div>`}
     <div class="grid2">
       <label>الكمية<input id="adjQty" type="number" min="1" step="1" inputmode="numeric" value="${esc(ADJ.qty)}"></label>
@@ -1817,7 +1817,7 @@ function countRows() {
   return list.slice(0, 120).map((i) => {
     const v = COUNTS[i.code] ?? '';
     const diff = v === '' ? null : +v - i.qty;
-    return `<tr><td class="name">${esc(i.name)}<span class="cat n">${esc(i.code)}</span></td><td class="n">${fmt(i.qty)}</td>
+    return `<tr><td class="name"><bdi>${esc(i.name)}</bdi><span class="cat n">${esc(i.code)}</span></td><td class="n">${fmt(i.qty)}</td>
       <td><input class="disc n" type="number" min="0" step="1" inputmode="numeric" data-count="${esc(i.code)}" value="${esc(v)}" aria-label="العدد على الرف"></td>
       <td class="n" data-diff="${esc(i.code)}">${diff === null ? '' : diff === 0 ? '<span class="pill ok">مظبوط</span>' : `<span class="pill ${diff < 0 ? 'crit' : 'warn'}">${diff > 0 ? '+' : ''}${fmt(diff)}</span>`}</td></tr>`;
   }).join('') + (list.length > 120 ? `<tr><td colspan="4" class="muted">ظاهر أول 120 من ${fmt(list.length)}. دوّر عشان تلاقي الباقي.</td></tr>` : '');
@@ -1838,7 +1838,7 @@ function quickCountForm() {
   return `<form id="qcForm" class="card stack" novalidate>
     <h3>جرد سريع</h3>
     <p class="note">امسح الباركود أو اكتب الاسم، اكتب الكمية والصلاحية، ودوس Enter. الكمية بتتضاف على الرصيد، فلو الصنف له أكتر من تاريخ صلاحية سجّل كل تاريخ لوحده. الصنف اللي مش متسجل بيتضاف من هنا.</p>
-    ${it ? `<div class="row u-between"><b>${esc(it.name)}</b><span class="muted">الرصيد دلوقتي <b class="n">${fmt(it.qty)}</b></span><button type="button" class="btn" id="qcChange">صنف تاني</button></div>`
+    ${it ? `<div class="row u-between"><b><bdi>${esc(it.name)}</bdi></b><span class="muted">الرصيد دلوقتي <b class="n">${fmt(it.qty)}</b></span><button type="button" class="btn" id="qcChange">صنف تاني</button></div>`
       : QC.isNew ? `<div class="row u-between"><b>صنف جديد${QC.barcode ? ` · باركود <span class="n">${esc(QC.barcode)}</span>` : ''}</b><button type="button" class="btn" id="qcChange">صنف تاني</button></div>
         <label>اسم الصنف<input id="qcName" maxlength="200" autocomplete="off" value="${esc(QC.name)}"></label>`
       : `<div class="row"><div class="pos-search u-grow0"><input id="qcQ" type="search" autocomplete="off" placeholder="امسح باركود الصنف أو اكتب اسمه…" aria-label="الصنف" value="${esc(QC.q)}"><div id="qcResults" class="results" hidden></div></div>
@@ -1872,7 +1872,7 @@ function qcSearch(enter) {
     return qcPick(list[0].code);
   }
   box.hidden = false;
-  box.innerHTML = list.map((it, i) => `<button type="button" class="res ${i === 0 ? 'first' : ''}" data-qcpick="${esc(it.code)}"><span>${esc(it.name)}</span><span class="muted n">رصيد ${fmt(it.qty)}</span></button>`).join('')
+  box.innerHTML = list.map((it, i) => `<button type="button" class="res ${i === 0 ? 'first' : ''}" data-qcpick="${esc(it.code)}"><span><bdi>${esc(it.name)}</bdi></span><span class="muted n">رصيد ${fmt(it.qty)}</span></button>`).join('')
     + (r.item ? '' : `<button type="button" class="res" data-qcnew="1"><span>+ صنف جديد: ${esc(q)}</span></button>`);
   if (r.item || /^\d+$/.test(q)) return;
   loadDrugs().then((rows) => {
@@ -1949,7 +1949,7 @@ function renderAdjust() {
   const hist = MOVES.filter(inBranch({ id: bid })).sort((a, b) => String(b.happened_at).localeCompare(String(a.happened_at))).slice(0, 100);
   const exp = expired.length ? `<div class="card"><h3>علب منتهية لسه في الرصيد (${fmt(expired.length)} صنف)</h3>
     <p class="note">لو شلتها من الرف فعلاً، دوس «شيلها» وهتتسجل خسارة منتهي الصلاحية.</p>
-    ${table(['الصنف', 'منتهي من', 'الكمية', 'قيمتها', ''], expired.map((x) => `<tr><td class="name">${esc(x.name)}</td><td>${expText(x.expiry)}</td><td class="n">${fmt(x.qty)}</td><td>${egp(x.value)}</td><td>${isOwner() ? `<button class="btn" type="button" data-expout="${esc(x.code)}" data-expqty="${x.qty}">شيلها</button>` : ''}</td></tr>`))}</div>` : '';
+    ${table(['الصنف', 'منتهي من', 'الكمية', 'قيمتها', ''], expired.map((x) => `<tr><td class="name"><bdi>${esc(x.name)}</bdi></td><td>${expText(x.expiry)}</td><td class="n">${fmt(x.qty)}</td><td>${egp(x.value)}</td><td>${isOwner() ? `<button class="btn" type="button" data-expout="${esc(x.code)}" data-expqty="${x.qty}">شيلها</button>` : ''}</td></tr>`))}</div>` : '';
   const count = `<details class="help" id="countBox" ${countedN() || COUNT_Q ? 'open' : ''}><summary>جرد الرف (اكتب العدد الفعلي لكل صنف)</summary>
     <p class="note">اكتب اللي لقيته على الرف قدام كل صنف، حتى لو صفر. اللي بتكتبه بيتحفظ على الجهاز لحد ما تسجّل الجرد، فتقدر تجرد على كذا مرة.</p>
     <input id="countQ" type="search" autocomplete="off" placeholder="دوّر على صنف…" value="${esc(COUNT_Q)}" aria-label="دوّر في الجرد">
@@ -1972,7 +1972,7 @@ function adjustSearch(enter) {
   const list = r.item ? [r.item] : r.matches.slice(0, 8);
   if (enter && list.length) { pickAdjust(list[0].code); return; }
   box.hidden = !list.length;
-  box.innerHTML = list.map((it, i) => `<button type="button" class="res ${i === 0 ? 'first' : ''}" data-adjpick="${esc(it.code)}"><span>${esc(it.name)}</span><span class="muted n">رصيد ${fmt(it.qty)}</span></button>`).join('');
+  box.innerHTML = list.map((it, i) => `<button type="button" class="res ${i === 0 ? 'first' : ''}" data-adjpick="${esc(it.code)}"><span><bdi>${esc(it.name)}</bdi></span><span class="muted n">رصيد ${fmt(it.qty)}</span></button>`).join('');
 }
 function pickAdjust(code) {
   ADJ.code = code; ADJ.cost = ''; ADJ_NOTE = '';
@@ -2399,8 +2399,8 @@ function renderAnalysis(A) {
   const sup = supplierPerformance(PURCHASES.filter((p) => BRANCH === 'all' || inBranch({ id: BRANCH_ID() })(p)));
   const an = anomalies({ receipts: POS_SALES, shifts: Array.isArray(SHIFT_ROWS) ? SHIFT_ROWS : [], priceChanges: PREV_DATA ? priceChanges(PREV_DATA.items, DATA.items) : [], expenses: EXP_READY ? EXPENSES : [], today: TODAY });
   if (SHIFT_ROWS === null) loadLatest('pos_shifts', 'id, branch_id, employee_name, opened_at, opening_cash, closed_at, expected_cash, counted_cash, totals, note', 'opened_at', 500).then((r) => { SHIFT_ROWS = r || []; if (TAB === 'analysis') render(true); });
-  const trendRows = (list) => list.map((r) => `<tr><td class="name">${esc(r.name)}</td><td class="n">${fmt(r.before)}</td><td class="n"><b>${fmt(r.now)}</b></td><td>${r.change === null ? '<span class="pill ok">جديد</span>' : pctPill(r.change)}</td></tr>`);
-  const cls = (title, list, note) => (list.length ? `<details class="help"><summary><b>${title}</b> (${fmt(list.length)}) — ${note}</summary>${table(['الصنف', 'علب', 'المبيعات', 'المكسب', 'الهامش'], list.slice(0, 50).map((r) => `<tr><td class="name">${esc(r.name)}</td><td class="n">${fmt(r.qty)}</td><td>${egp(r.sales)}</td><td>${egp(r.gross)}</td><td class="n">${fmt(r.margin, 1)}%</td></tr>`))}</details>` : '');
+  const trendRows = (list) => list.map((r) => `<tr><td class="name"><bdi>${esc(r.name)}</bdi></td><td class="n">${fmt(r.before)}</td><td class="n"><b>${fmt(r.now)}</b></td><td>${r.change === null ? '<span class="pill ok">جديد</span>' : pctPill(r.change)}</td></tr>`);
+  const cls = (title, list, note) => (list.length ? `<details class="help"><summary><b>${title}</b> (${fmt(list.length)}) — ${note}</summary>${table(['الصنف', 'علب', 'المبيعات', 'المكسب', 'الهامش'], list.slice(0, 50).map((r) => `<tr><td class="name"><bdi>${esc(r.name)}</bdi></td><td class="n">${fmt(r.qty)}</td><td>${egp(r.sales)}</td><td>${egp(r.gross)}</td><td class="n">${fmt(r.margin, 1)}%</td></tr>`))}</details>` : '');
   return `<h3>حاجات تستاهل نظرة</h3>
   ${an.length ? `<div class="stack">${an.slice(0, 30).map((x) => `<div class="card alert ${x.level}"><b>${esc(x.title)}</b><p class="note">${esc(x.evidence)}</p></div>`).join('')}</div><p class="note">دي أرقام بس، مش اتهام لحد: مثلاً كاشير الوردية الزحمة طبيعي يبقى عنده مرتجعات أكتر. راجع وقرر بنفسك.</p>` : '<p class="muted">مفيش حاجة غريبة في آخر 30 يوم.</p>'}
   <h3>الطلب زاد (آخر 30 يوم مقابل الـ 30 اللي قبلهم)</h3>${t.up.length ? table(['الصنف', 'قبل', 'دلوقتي', 'التغيير'], trendRows(t.up)) : '<p class="muted">مفيش أصناف زاد الطلب عليها بشكل واضح.</p>'}
@@ -2450,7 +2450,7 @@ function assistantCtx() {
   return { data: DATA, A: ANALYSIS.full, receipts: POS_SALES.filter(here), expenses: EXP_READY ? EXPENSES : [], purchases: PURCHASES.filter(here), suppliers: SUPPLIERS(), chosen: CHOSEN(),
     shifts: Array.isArray(SHIFT_ROWS) ? SHIFT_ROWS : [], today: TODAY, role: SESS.role, branchId: branchArg() };
 }
-const resultHtml = (r) => `${r.text ? `<p>${esc(r.text)}</p>` : ''}${r.table?.rows?.length ? `<div class="tablebox"><table><thead><tr>${r.table.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${r.table.rows.slice(0, 50).map((row) => `<tr>${row.map((c) => `<td class="${typeof c === 'number' ? 'n' : 'name'}">${esc(typeof c === 'number' ? fmt(c, Number.isInteger(c) ? 0 : 2) : c)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : ''}
+const resultHtml = (r) => `${r.text ? `<p>${esc(r.text)}</p>` : ''}${r.table?.rows?.length ? `<div class="tablebox"><table><thead><tr>${r.table.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${r.table.rows.slice(0, 50).map((row) => `<tr>${row.map((c) => `<td class="${typeof c === 'number' ? 'n' : 'name'}">${typeof c === 'number' ? esc(fmt(c, Number.isInteger(c) ? 0 : 2)) : `<bdi>${esc(c)}</bdi>`}</td>`).join('')}</tr>`).join('')}</tbody></table></div>` : ''}
   <p class="muted small">${r.range ? `الفترة: <span class="n">${esc(r.range)}</span> · ` : ''}${r.source ? `المصدر: ${esc(r.source)}` : ''}${r.tab ? ` · <button class="linkbtn" type="button" data-gotab="${r.tab}">افتح الشاشة</button>` : ''}</p>`;
 function renderAssistant() {
   if (AI_ON === null && SESS.client?.ai) { AI_ON = false; SESS.client.ai('status').then((r) => { AI_ON = !!r.data?.enabled; if (TAB === 'assistant') render(true); }); }

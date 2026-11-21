@@ -249,7 +249,7 @@ function setUnit(l, key) {
 function renderCart() {
   const t = totals();
   $('cart').innerHTML = CART.map((l, i) => `<tr>
-    <td class="name">${esc(l.name)}<span class="cat n">${esc(l.code)}</span>${unitPick(l, i)}</td>
+    <td class="name"><bdi>${esc(l.name)}</bdi><span class="cat n">${esc(l.code)}</span>${unitPick(l, i)}</td>
     <td class="n">${fmt(l.price)}</td>
     <td><div class="qty"><button class="btn" data-dec="${i}" aria-label="أقل">−</button><input class="n" type="number" min="1" ${l.max ? `max="${l.max}"` : ''} step="1" value="${l.qty}" data-qty="${i}" aria-label="الكمية"><button class="btn" data-inc="${i}" aria-label="أكتر">+</button></div></td>
     <td><input class="n disc" type="number" min="0" ${dev.linePct && !l.max ? 'max="100" step="1"' : 'step="0.5"'} value="${lineDiscValue(l)}" placeholder="0" data-disc="${i}" aria-label="${dev.linePct ? 'خصم على الصنف (نسبة %)' : 'خصم على الصنف (جنيه)'}" ${l.max ? 'readonly title="نفس الخصم اللي اتعمل في فاتورة البيع"' : ''}>${dev.linePct && l.discount && !l.max ? `<span class="cat n">${fmt(l.discount)}</span>` : ''}</td>
@@ -409,7 +409,7 @@ function showResults(list, box = $('results'), attr = 'pick', title = '') {
   box.hidden = !list.length;
   box.innerHTML = (title && list.length ? `<div class="res-title">${esc(title)}</div>` : '') + list.map((it, i) => {
     const left = stockOf(it.code);
-    return `<button class="res ${i === 0 ? 'first' : ''}" data-${attr}="${esc(it.code)}">${it.image && SESS.client?.itemImage ? `<img class="thumb" data-img="${esc(it.code)}" alt="">` : ''}<span>${esc(it.name)}${it.en ? ` <span class="muted" dir="ltr">${esc(it.en)}</span>` : ''}</span><span class="muted n">${fmt(it.price)} ج · رصيد ${left}</span></button>`;
+    return `<button class="res ${i === 0 ? 'first' : ''}" data-${attr}="${esc(it.code)}">${it.image && SESS.client?.itemImage ? `<img class="thumb" data-img="${esc(it.code)}" alt="">` : ''}<span><bdi>${esc(it.name)}</bdi>${it.en ? ` <span class="muted" dir="ltr">${esc(it.en)}</span>` : ''}</span><span class="muted n">${fmt(it.price)} ج · رصيد ${left}</span></button>`;
   }).join('');
   // Item photos, read once per item and kept for the session.
   for (const img of box.querySelectorAll('img[data-img]')) {
@@ -805,7 +805,7 @@ function receiptHtml(sale) {
   return `<div class="rc-head">${dev.logo ? `<img class="rc-logo" src="${esc(dev.logo)}" alt="">` : ''}<b>${esc(SESS.pharmacy.name)}</b>${branch ? `<div>${esc(branch)}</div>` : ''}
     ${dev.addr ? `<div>${esc(dev.addr)}</div>` : ''}${dev.phone ? `<div class="n">${esc(dev.phone)}</div>` : ''}
     <div>${ret ? 'مرتجع' : 'فاتورة'} رقم <span class="n">${esc(sale.number)}</span></div>${sale.return_no ? `<div>من فاتورة <span class="n">${esc(sale.return_no)}</span></div>` : ''}<div>${esc(when)}</div></div>
-    <table class="rc-lines">${sale.lines.map((l) => `<tr><td colspan="3">${esc(l.name)}</td></tr><tr><td class="n">${l.qty}${+l.per > 1 ? ` ${unitLabel(l)}` : ''} × ${fmt(l.price)}</td><td class="n">${l.discount ? `−${fmt(l.discount)}` : ''}</td><td class="n">${fmt(l.price * l.qty - l.discount)}</td></tr>`).join('')}</table>
+    <table class="rc-lines">${sale.lines.map((l) => `<tr><td colspan="3"><bdi>${esc(l.name)}</bdi></td></tr><tr><td class="n">${l.qty}${+l.per > 1 ? ` ${unitLabel(l)}` : ''} × ${fmt(l.price)}</td><td class="n">${l.discount ? `−${fmt(l.discount)}` : ''}</td><td class="n">${fmt(l.price * l.qty - l.discount)}</td></tr>`).join('')}</table>
     <div class="rc-tot">${sale.discount ? `<div><span>الخصم</span><span class="n">${fmt(sale.discount)}</span></div>` : ''}${sale.delivery_fee ? `<div><span>التوصيل</span><span class="n">${fmt(sale.delivery_fee)}</span></div>` : ''}
     <div class="big"><span>${ret ? 'المرتجع' : 'الإجمالي'}</span><span class="n">${fmt(Math.abs(sale.total))}</span></div>
     ${vatOf(sale.lines, sale.discount) ? `<div><span>منها ضريبة القيمة المضافة</span><span class="n">${fmt(vatOf(sale.lines, sale.discount))}</span></div>` : ''}
@@ -862,7 +862,7 @@ function printDay() {
     <div><span>مرتجعات</span><span class="n">${fmt(sum.returned)}</span></div><div><span>خصومات</span><span class="n">${fmt(sum.discount)}</span></div>
     ${Object.entries(sum.byPayment).map(([k, v]) => `<div><span>${esc(PAYMENTS.find(([p]) => p === k)?.[1] ?? k)}</span><span class="n">${fmt(v)}</span></div>`).join('')}
     <div class="big"><span>الصافي</span><span class="n">${fmt(sum.net)}</span></div></div>
-    ${items.length ? `<div class="rc-tot"><div><b>اتباع إيه</b><span></span></div>${items.map((i) => `<div><span>${esc(i.name)} × ${i.qty}</span><span class="n">${fmt(i.value)}</span></div>`).join('')}</div>` : ''}`);
+    ${items.length ? `<div class="rc-tot"><div><b>اتباع إيه</b><span></span></div>${items.map((i) => `<div><span><bdi>${esc(i.name)}</bdi> × ${i.qty}</span><span class="n">${fmt(i.value)}</span></div>`).join('')}</div>` : ''}`);
 }
 
 // ---------- Sync & status ----------
