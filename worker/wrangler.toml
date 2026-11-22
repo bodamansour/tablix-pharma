@@ -31,10 +31,11 @@ BACKUP_CRON = "30 1 * * *"
 # (each account is redone at its next sign-in).
 PBKDF2_ITER = "10000"
 SITE_URL = "https://tablix.tablixpharma.workers.dev"
-# Sign in with Google (src/session.js, worker/src/google.js): the OAuth Web client's ID, which is public. Its
-# Authorized JavaScript origins list this site and staging. While the consent screen is in Testing, only its
-# test users can sign in with Google.
-GOOGLE_CLIENT_ID = "184002310002-ldg2gjnsku0s2uc24q5v0tol1379kldg.apps.googleusercontent.com"
+# Sign in with Google (src/session.js, worker/src/google.js) is off on the live site for now: its consent screen
+# is still in Testing, so anyone but its test users gets "Access blocked". Without this value the button
+# doesn't show. Once the consent screen is published (it needs the app's own domain), turn it back on with
+# the OAuth Web client's ID, which is public; its Authorized JavaScript origins list this site and staging:
+# GOOGLE_CLIENT_ID = "184002310002-ldg2gjnsku0s2uc24q5v0tol1379kldg.apps.googleusercontent.com"
 # Hourly sealing and owner verification limits; measure CPU and R2 history inventory on staging before changing them.
 SEAL_BUDGET = "150"
 VERIFY_MAX_ROWS = "200"
