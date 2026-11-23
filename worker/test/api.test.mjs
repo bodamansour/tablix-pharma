@@ -252,8 +252,10 @@ test('a return without a receipt needs a manager the owner allowed, approving wi
   // The record: the approval (who sold, who approved, why, how much) and the return, in the log of changes.
   const appr = (await owner.select('return_approvals', 'return_id, total, reason, cashier_name, approver_name', [['id', 'eq', ok.data.approval_id]])).data[0];
   assert.deepEqual(appr, { return_id: bare.id, total: -30, reason: 'العميل نسي الفاتورة', cashier_name: 'كاشير المرتجع', approver_name: 'مدير الوردية' });
-  const log = (await owner.select('audit_log', 'table_name', [['pharmacy_id', 'eq', P], ['row_id', 'in', [bare.id, ok.data.approval_id]]])).data.map((r) => r.table_name).sort();
-  assert.deepEqual(log, ['pos_sales', 'return_approvals']);
+  const log = (await owner.select('audit_log', 'table_name, op', [['pharmacy_id', 'eq', P], ['row_id', 'in', [bare.id, ok.data.approval_id]]])).data;
+  assert.deepEqual([...new Set(log.map((r) => r.table_name))].sort(), ['pos_sales', 'return_approvals']);
+  // This test's device sends no cashier_pin token: the return is taken and marked for the owner.
+  assert.ok(log.some((r) => r.table_name === 'pos_sales' && r.op === 'flag'));
   // Approvals are written only by the server: nobody can add or change one through the data API.
   assert.equal((await owner.insert('return_approvals', { id: uuid(), pharmacy_id: P, return_id: uuid(), total: -1, reason: 'x', cashier_employee_id: cashierId, cashier_name: 'x', approver_employee_id: managerId, approver_name: 'x', created_at: now() })).status, 403);
   assert.equal((await owner.db({ op: 'delete', table: 'return_approvals', filters: [['id', 'eq', ok.data.approval_id]] })).status, 403);

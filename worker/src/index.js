@@ -7,7 +7,7 @@
 //   POST /rest/v1/rpc/upload_snapshot (the pharmacy connector, same address shape as before)
 import { ApiError, select, insert, update, remove } from './db.js';
 import { signUp, signIn, signInWithGoogle, linkGoogle, signOut, userOf, changePassword, sessionCookie, clearCookie, mfaSetup, mfaEnable, mfaDisable, forgotPassword, resetPassword, emailReady, mfaOf } from './auth.js';
-import { RPC, rpcNamed, checkPosSale, reportFeed, remindersFeed, markRemindersSent, storeSnapshotText, branchOf } from './rpc.js';
+import { RPC, rpcNamed, checkPosSale, cashierCheck, reportFeed, remindersFeed, markRemindersSent, storeSnapshotText, branchOf } from './rpc.js';
 import { requireRole } from './db.js';
 import { aiChat, aiInvoice } from './ai.js';
 import { payStart, payWebhook, payReady } from './pay.js';
@@ -145,8 +145,18 @@ async function api(req, env, url, ctx) {
     const ctx = await contextOf(env, req);
     if (q.op === 'select') { const r = await select(ctx, env, q); return json(rowsJson(r.rows, r.blob)); }
     if (q.op === 'insert' || q.op === 'upsert') {
+      // A receipt or a shift carries the cashier's PIN sign-in (cashier_token, from cashier_pin): it is
+      // checked here and never stored.
+      const tokens = new Map();
+      if (q.table === 'pos_sales' || q.table === 'pos_shifts') {
+        for (const r of Array.isArray(q.rows) ? q.rows : [q.rows]) {
+          if (r && typeof r === 'object' && 'cashier_token' in r) { tokens.set(String(r.id), r.cashier_token); delete r.cashier_token; }
+        }
+      }
       await insert(ctx, env, q, { beforeInsert: async (table, row) => {
-        if (table === 'pos_sales') return checkPosSale(ctx, env, row);
+        if (table === 'pos_sales') return checkPosSale(ctx, env, row, tokens.get(String(row.id)) ?? null);
+        // A shift opened for a cashier: a token for someone else is refused (none at all is taken).
+        if (table === 'pos_shifts') { await cashierCheck(env, ctx, row.pharmacy_id, row.employee_id, tokens.get(String(row.id)) ?? null, row.opened_at); return; }
         // The cashier device records only money taken out of the drawer; other expenses are the owner's.
         if (table === 'expenses' && !['owner', 'accountant'].includes(ctx.roles.get(row.pharmacy_id)) && row.kind !== 'withdrawal') throw new ApiError('not allowed', '42501', 403);
         // Treasury moves: only a correction may be negative; a count, a trip to the bank and back are amounts.
@@ -171,8 +181,15 @@ async function api(req, env, url, ctx) {
   // The connector sends {"p_token":"…","p_data":<the data>}: the data is taken out as text.
   if (/^\/(?:api\/rpc|rest\/v1\/rpc)\/upload_snapshot$/.test(path)) {
     const text = await req.text();
-    const head = /^\s*\{\s*"p_token"\s*:\s*("(?:[^"\\]|\\.)*")\s*,\s*"p_data"\s*:/.exec(text.slice(0, 400));
-    const args = head ? { p_token: JSON.parse(head[1]), p_data_text: text.slice(head[0].length, text.lastIndexOf('}')) } : JSON.parse(text);
+    // Fast path (the data is not parsed: it can be several MB): exactly {"p_token":"…","p_data":{…}} with
+    // the data an object and nothing after it but the closing brace. Anything else is parsed whole.
+    const head = /^\s*\{\s*"p_token"\s*:\s*("(?:[^"\\]|\\.)*")\s*,\s*"p_data"\s*:\s*(?=\{)/.exec(text.slice(0, 400));
+    const end = text.lastIndexOf('}');
+    const inner = head ? text.slice(head[0].length, end) : null;
+    const fast = head && /^\s*$/.test(text.slice(end + 1)) && /\}\s*$/.test(inner.slice(-64));
+    let args;
+    if (fast) args = { p_token: JSON.parse(head[1]), p_data_text: inner };
+    else { try { args = JSON.parse(text); } catch { throw new ApiError('bad snapshot'); } }
     return json({ data: await RPC.upload_snapshot(env, { user: null, roles: new Map() }, args), error: null });
   }
   const m = /^\/(?:api\/rpc|rest\/v1\/rpc)\/([a-z_]+)$/.exec(path);
