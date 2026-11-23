@@ -129,7 +129,7 @@ async function storeBlobs(env, pharmacyId, key, snapshots) {
   for (const s of snapshots) {
     const name = `snapshots/${s.id}.json`;
     const o = await env.FILES.get(name);
-    if (!o) continue;
+    if (!o) throw new Error(`backup source snapshot missing: ${name}`);
     let text = await o.text();
     const sha = await sha256hex(text);
     let file = await encryptBackup(env, pharmacyId, text);
@@ -163,6 +163,7 @@ export async function loadBlobFiles(env, pharmacyId, dump) {
 export async function runBackup(env, pharmacyId, { by = null, source = 'manual' } = {}) {
   const id = uuid(), at = nowIso();
   const key = `backups/${pharmacyId}/${at.replace(/[:.]/g, '-')}-${id.slice(0, 8)}.sdbk`;
+  let result;
   try {
     const dump = await dumpPharmacy(env, pharmacyId, { blobs: false });
     dump.blob_files = await storeBlobs(env, pharmacyId, key, dump.tables.snapshots);
@@ -176,8 +177,7 @@ export async function runBackup(env, pharmacyId, { by = null, source = 'manual' 
     if (!back || (await sha256hex(await decryptBackup(env, pharmacyId, await back.arrayBuffer()))) !== sha) throw new Error('backup check after writing failed');
     await env.DB.prepare('INSERT INTO backups (id, pharmacy_id, created_at, status, r2_key, bytes, sha256, summary, created_by, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
       .bind(id, pharmacyId, at, 'ok', key, file.length, sha, JSON.stringify({ counts: summary.counts, money: summary.money, blobs: summary.blobs, key_id: await keyIdOfFile(file) }), by, source).run();
-    await prune(env, pharmacyId);
-    return { id, key, bytes: file.length, sha256: sha, counts: summary.counts };
+    result = { id, key, bytes: file.length, sha256: sha, counts: summary.counts };
   } catch (e) {
     // Files of a backup that did not finish are not kept (best effort; never listed as a backup).
     try { const page = env.FILES.list ? await env.FILES.list({ prefix: `${key}.f` }) : null; const ks = (page?.objects || []).map((x) => x.key); if (ks.length) await env.FILES.delete(ks); } catch { /* nothing more to do */ }
@@ -185,6 +185,9 @@ export async function runBackup(env, pharmacyId, { by = null, source = 'manual' 
       .bind(id, pharmacyId, at, 'failed', String(e?.message || e).slice(0, 500), by, source).run().catch(() => {});
     throw e;
   }
+  // A retention failure must never remove the files of a verified new backup.
+  await prune(env, pharmacyId).catch(() => console.error('BACKUP_RETENTION_FAILED'));
+  return result;
 }
 async function prune(env, pharmacyId) {
   const old = await rowsOf(env, "SELECT id, r2_key FROM backups WHERE pharmacy_id = ? AND status = 'ok' ORDER BY created_at DESC LIMIT -1 OFFSET ?", pharmacyId, RETAIN);
