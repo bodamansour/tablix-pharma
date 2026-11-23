@@ -98,8 +98,8 @@ test('a receipt naming a cashier with no token, or an old one, is taken and mark
   assert.equal(await cashierCheck(e, device, p, null, null), 'ok', 'a receipt with no cashier named needs nothing');
 });
 
-test('a return without its receipt: the approval refuses another cashier\'s token and logs one sent without a token', async () => {
-  const { e, p, b, owner, emp, other, device } = await withCashier();
+test('a return without its receipt: the approval needs the cashier\'s own PIN sign-in on this device', async () => {
+  const { e, p, b, emp, other, device } = await withCashier();
   await e.DB.prepare('UPDATE employees SET can_approve_returns = 1 WHERE id = ?').bind(other).run();
   const [row] = await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '4821' });
   const ask = (o = {}) => RPC.approve_no_receipt_return(e, device, { p_pharmacy: p, p_branch: b, p_return_id: crypto.randomUUID(), p_total: -20, p_reason: 'العميل نسي الفاتورة', p_cashier: emp, p_pin: '7390', ...o });
@@ -107,12 +107,10 @@ test('a return without its receipt: the approval refuses another cashier\'s toke
   // The manager's own token can't stand for the cashier.
   const [mgr] = await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '7390' });
   await assert.rejects(ask({ p_cashier_token: mgr.cashier_token }), /on this device/);
-  // No token (an older app): approved, and the log of changes says the cashier was not verified.
-  assert.ok((await ask()).approval_id);
-  const logged = (await e.DB.prepare("SELECT new_row FROM audit_log WHERE table_name = 'return_approvals' ORDER BY id").all()).results.map((r) => JSON.parse(r.new_row));
-  assert.equal(logged.at(-1).cashier_verified, false);
-  assert.equal(logged[0].cashier_verified, undefined);
-  void owner;
+  // No token (an older app) or one that no longer counts: refused, the cashier types the PIN again.
+  await assert.rejects(ask(), /sign in with their PIN again/);
+  await RPC.set_employee_pin(e, { user: { id: 'u-owner' }, roles: new Map([[p, 'owner']]) }, { p_employee: emp, p_pin: '6161' });
+  await assert.rejects(ask({ p_cashier_token: row.cashier_token }), /sign in with their PIN again/);
 });
 
 test('the morning report skips a damaged upload and uses the one before it', async () => {

@@ -218,7 +218,9 @@ test('a return without a receipt needs a manager the owner allowed, approving wi
   const cashierId = (await owner.rpc('add_employee', { p_pharmacy: P, p_name: 'كاشير المرتجع', p_pin: '482915' })).data;
   const managerId = (await owner.rpc('add_employee', { p_pharmacy: P, p_name: 'مدير الوردية', p_pin: '593026' })).data;
   const loose = (o = {}) => rcpt({ kind: 'return', lines: [{ code: 'Z1', qty: 1, price: 30 }], total: -30, paid: -30, note: 'مرتجع من غير فاتورة: العميل نسيها', employee_id: cashierId, ...o });
-  const approve = (ret, o = {}) => device.rpc('approve_no_receipt_return', { p_pharmacy: P, p_branch: B, p_return_id: ret.id, p_total: ret.total, p_reason: 'العميل نسي الفاتورة', p_cashier: cashierId, p_pin: '593026', ...o });
+  // The cashier's PIN sign-in on this device (cashier_pin): a return approval needs it.
+  const cashierToken = (await device.rpc('cashier_pin', { p_pharmacy: P, p_pin: '482915' })).data[0].cashier_token;
+  const approve = (ret, o = {}) => device.rpc('approve_no_receipt_return', { p_pharmacy: P, p_branch: B, p_return_id: ret.id, p_total: ret.total, p_reason: 'العميل نسي الفاتورة', p_cashier: cashierId, p_cashier_token: cashierToken, p_pin: '593026', ...o });
 
   // No approval: refused, nothing stored.
   const bare = loose();
@@ -235,6 +237,7 @@ test('a return without a receipt needs a manager the owner allowed, approving wi
   assert.match((await approve(bare, { p_pin: '482915' })).error.message, /another employee/);
   assert.match((await approve(bare, { p_cashier: uuid() })).error.message, /sign in with their PIN/);
   assert.match((await approve(bare, { p_reason: '  ' })).error.message, /needs a reason/);
+  assert.match((await approve(bare, { p_cashier_token: undefined })).error.message, /sign in with their PIN again/, 'no PIN sign-in on this device: refused');
   assert.match((await approve(bare, { p_total: 30 })).error.message, /bad return total/);
   // Approved: the approval is for this return, this amount and this cashier only.
   const ok = await approve(bare);

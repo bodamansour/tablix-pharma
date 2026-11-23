@@ -276,9 +276,9 @@ export const RPC = {
     if (!isId(p_cashier)) throw new ApiError('the cashier must sign in with their PIN first');
     const cashier = await one(env, 'SELECT id, name FROM employees WHERE id = ? AND pharmacy_id = ? AND active = 1', p_cashier, p_pharmacy);
     if (!cashier) throw new ApiError('the cashier must sign in with their PIN first');
-    // A token for another cashier or another device is refused; none at all (an older app) is taken and
-    // marked in the log of changes.
-    const cashierProof = await cashierCheck(env, ctx, p_pharmacy, cashier.id, p_cashier_token);
+    // Asked with the connection on, so the cashier's PIN sign-in on this device must be shown: a token for
+    // another cashier or device, an expired one, or none at all (an app from before 2026-11-23) is refused.
+    if (await cashierCheck(env, ctx, p_pharmacy, cashier.id, p_cashier_token) !== 'ok') throw new ApiError('the cashier must sign in with their PIN again on this device', '42501', 403);
     const approver = await pinEmployee(env, ctx, p_pharmacy, p_pin, 'wrong pin');
     const can = await one(env, 'SELECT can_approve_returns FROM employees WHERE id = ?', approver.id);
     if (!can?.can_approve_returns) throw new ApiError('this employee may not approve returns', '42501', 403);
@@ -294,7 +294,7 @@ export const RPC = {
     const cols = Object.keys(row);
     await runBatch(env, [
       env.DB.prepare(`INSERT INTO return_approvals (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).bind(...cols.map((c) => row[c])),
-      audit(env, ctx, 'return_approvals', 'insert', null, cashierProof === 'ok' ? row : { ...row, cashier_verified: false }),
+      audit(env, ctx, 'return_approvals', 'insert', null, row),
     ]);
     return { approval_id: row.id, approver_name: approver.name };
   },
