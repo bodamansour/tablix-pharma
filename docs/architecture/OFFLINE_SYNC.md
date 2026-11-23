@@ -23,6 +23,7 @@ Last updated: 2026-11-03. Scope: how cashier receipts made without a connection 
 | Same `id` with **different** contents (pharmacy, kind, number, `sold_at`, total, lines or `return_of` differ) | **Refused, 409 `conflicting receipt id`**. The stored receipt is unchanged; the new one stays in the device's refused list for the owner. Previously it was silently dropped. | Phase 2 prep |
 | Same number with a different id | Refused, 409 (Phase 1) | Phase 1 |
 | Signs of a wrong clock or a hand-set time | **Stored, and flagged** in the change log (`audit_log`, op `flag`), shown to the owner in «سجل التعديلات» as «وقت محتاج نظرة» | Phase 2 prep |
+| Employee shift opening or manager approval for a return | Requires a current cashier PIN proof for the same pharmacy, employee and account. Invalid or missing proof is refused with 403. | Cashier PIN verification |
 
 Flags (none of them refuses a receipt):
 
@@ -32,6 +33,7 @@ Flags (none of them refuses a receipt):
 | `before_shift_opened` / `after_shift_closed` | `sold_at` is outside the shift the receipt names (10-minute slack) | A receipt "sold" while its cashier's shift wasn't open |
 | `return_before_sale` | A return dated before the sale it returns | Impossible in real time |
 | `after_day_closed` | It arrives for a branch day already closed with «قفل اليوم» (date taken in the pharmacy's time zone) | It changes totals the owner already signed off. The stored day-close row is not updated. |
+| `cashier_not_verified` | The receipt names an employee without proof valid for that employee, pharmacy and account at the time of sale. | The receipt is kept and the owner can review the attribution. |
 
 Not flagged on purpose: being late by itself. A receipt made offline two weeks ago and numbered that day is normal and gets no flag (tested).
 

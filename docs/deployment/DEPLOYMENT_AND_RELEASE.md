@@ -1,12 +1,12 @@
 # Deployment and Release
 
-Last updated: 2026-11-03 (Phase 1). This document supersedes the deployment parts of `docs/DEPLOYMENT_GUIDE.md` and `worker/README.md`.
+Updated 2026-11-23 to reflect the hosted staging setup. This document supersedes the deployment parts of `docs/DEPLOYMENT_GUIDE.md` and `worker/README.md`.
 
 ## 1. Production environment: what we know
 
 | Item | Finding | Evidence |
 |---|---|---|
-| Production Worker | `saydaliti`, served at `https://tablix.tablixpharma.workers.dev` | `worker/wrangler.toml` (`name`, `SITE_URL`) |
+| Production Worker | `tablix`, served at `https://tablix.tablixpharma.workers.dev` | `worker/wrangler.toml` (`name`, `SITE_URL`) |
 | Production D1 | `saydaliti`, id `3cf7edd2-…3529` | `worker/wrangler.toml` |
 | Production R2 | `saydaliti-files` | `worker/wrangler.toml` |
 | Is production actively deployed? | **Yes.** All 26 runs of the old `cloudflare.yml` (through 2026-10-31, `7d23b83`) succeeded. In the latest run, the remote-migration step (2 s) and the publish step (9 s) actually ran rather than being skipped. Migrations 0009 and 0010 are therefore applied to the live D1. | GitHub Actions run 41218360186, job steps 6–7 |
@@ -52,7 +52,7 @@ Regression guard: `test/release-workflow.test.js` fails if the release workflow 
 | Environment | Status |
 |---|---|
 | Local / CI Worker (Miniflare, local D1/R2) | Exists. Used by `test.yml` on every PR and by every release. This is the isolated test environment used for Phase 1. |
-| Hosted staging (separate Worker + D1 + R2) | **Does not exist.** Creating it needs Cloudflare resources on the owner's account: `wrangler d1 create saydaliti-staging`, `wrangler r2 bucket create saydaliti-files-staging`, then an `[env.staging]` block in `wrangler.toml` with **its own** `database_id`, bucket and `SITE_URL`, plus a staging `PIN_PEPPER` secret. Not created without approval. |
+| Hosted staging (separate Worker + D1 + R2) | The `tablix-staging` Worker has its own D1 database and R2 bucket. The [staging runbook](STAGING.md) describes the guarded GitHub Actions workflow and required settings. |
 
 Never use `wrangler versions upload` or preview URLs of the production Worker as a "staging": they share the production D1 and R2 bindings.
 
