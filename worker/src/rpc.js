@@ -155,6 +155,8 @@ export const RPC = {
       ]);
       return null;
     }
+    // Already in this pharmacy: nothing to do, and the code stays free for the person it was made for.
+    if (await one(env, 'SELECT 1 AS x FROM members WHERE pharmacy_id = ? AND user_id = ?', i.pharmacy_id, ctx.user.id)) return i.pharmacy_id;
     const plan = await planFor(env, i.pharmacy_id);
     if ((await one(env, 'SELECT count(*) AS n FROM members WHERE pharmacy_id = ?', i.pharmacy_id)).n >= plan.max_users) throw new ApiError('plan limit: users');
     // One code, one person, even when two people send it at the same moment: the batch runs as one

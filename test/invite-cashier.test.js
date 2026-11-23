@@ -144,3 +144,14 @@ test('a request body is limited by the bytes that arrive, not by the Content-Len
   // Within the limit: the bytes, whole.
   assert.equal((await readBody(new Request('https://x', { method: 'POST', body: stream(2), duplex: 'half' }), 2048)).byteLength, 2048);
 });
+
+test('someone already in the pharmacy who sends a fresh code does not use it up', async () => {
+  const e = env();
+  const { p, owner } = await pharmacy(e);
+  assert.equal(await RPC.join_pharmacy(e, ctxOf('u-old'), { p_code: await RPC.create_invite(e, owner, { p_pharmacy: p, p_role: 'pharmacist' }) }), p);
+  const code = await RPC.create_invite(e, owner, { p_pharmacy: p, p_role: 'stock' });
+  assert.equal(await RPC.join_pharmacy(e, ctxOf('u-old'), { p_code: code }), p, 'still answered with the pharmacy');
+  assert.equal((await e.DB.prepare('SELECT used_by FROM invites WHERE code = ?').bind(code.replace(/-/g, '')).first()).used_by, null, 'the code is still free');
+  assert.equal((await e.DB.prepare("SELECT role FROM members WHERE pharmacy_id = ? AND user_id = 'u-old'").bind(p).first()).role, 'pharmacist', 'the role is unchanged');
+  assert.equal(await RPC.join_pharmacy(e, ctxOf('u-new'), { p_code: code }), p, 'the person it was made for gets in');
+});
