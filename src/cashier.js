@@ -149,7 +149,9 @@ async function loadBarcodes() {
   const cached = await kvGet(K.codes(), []);
   let rows = cached;
   if (isOnline()) {
-    const { data, error } = await SESS.client.from('pos_barcodes').select('id, barcode, code').eq('pharmacy_id', SESS.pharmacy.id).limit(20000);
+    const { data, error } = await readAll(() => SESS.client.from('pos_barcodes').select('id, barcode, code')
+      .eq('pharmacy_id', SESS.pharmacy.id).order('id', { ascending: true }), { table: 'pos_barcodes', max: LOAD_MAX });
+    if (error?.incomplete) showDataAlert($('dataAlert'), error);
     if (!error) rows = [...data, ...cached.filter((c) => c.pending && !data.some((d) => d.barcode === c.barcode))];
   }
   // Keep barcodes taught while this was loading.

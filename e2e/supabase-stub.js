@@ -28,7 +28,8 @@ function builder(table) {
     DB[table] ||= [];
     const match = (r) => q.filters.every(([k, v, op]) => (op === 'gte' ? r[k] >= v : op === 'notnull' ? r[k] != null : r[k] === v));
     if (q.op === 'upsert') {
-      if (!DB[table].some((e) => e.id === q.row.id)) DB[table].push({ ...q.row, created_at: new Date().toISOString() });
+      const { cashier_token, ...row } = q.row;
+      if (!DB[table].some((e) => e.id === row.id)) DB[table].push({ ...row, created_at: new Date().toISOString() });
       persist(); return { data: null, error: null };
     }
     if (q.op === 'update') { for (const r of DB[table]) if (match(r)) Object.assign(r, q.patch); persist(); return { data: null, error: null }; }
@@ -44,8 +45,9 @@ function builder(table) {
       rows = window.__noBranches ? DB.members.map((m) => ({ ...m, pharmacies: { ...m.pharmacies, branches: undefined } })) : DB.members;
     } else rows = DB[table].filter(match);
     if (q._order) rows = [...rows].sort((a, b) => (q._order.asc ? 1 : -1) * String(a[q._order.col]).localeCompare(String(b[q._order.col])));
-    if (q._limit) rows = rows.slice(0, q._limit);
-    if (q._range) rows = rows.slice(q._range[0], q._range[1] + 1);
+    const from = q._range?.[0] ?? 0;
+    const count = Math.min(q._range ? q._range[1] - from + 1 : q._limit ?? 1000, 1000);
+    rows = rows.slice(from, from + count);
     return { data: rows, error: null };
   };
   Object.assign(q, {
@@ -118,7 +120,12 @@ export function createClient() {
         // Cashier staff with PINs (the test sets DB.staff), and a manager's approval of a return with no
         // receipt, with the same rules as the server (worker/src/rpc.js approve_no_receipt_return).
         if (name === 'cashier_staff') return { data: (DB.staff || []).filter((e) => e.active !== false).length, error: null };
-        if (name === 'cashier_pin') { const e = (DB.staff || []).find((x) => x.pin === String(args.p_pin)); return { data: e ? [{ employee_id: e.id, employee_name: e.name }] : [], error: null }; }
+        if (name === 'cashier_pin') {
+          const e = (DB.staff || []).find((x) => x.pin === String(args.p_pin));
+          if (!e) return { data: [], error: null };
+          const cashier_token = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join('');
+          return { data: [{ employee_id: e.id, employee_name: e.name, cashier_token }], error: null };
+        }
         if (name === 'approve_no_receipt_return') {
           const approver = (DB.staff || []).find((x) => x.pin === String(args.p_pin));
           if (!approver) return { data: null, error: { message: 'wrong pin' } };
