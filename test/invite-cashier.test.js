@@ -130,3 +130,17 @@ test('the morning report skips a damaged upload and uses the one before it', asy
   assert.ok(mine, 'the pharmacy is still in the report');
   assert.equal(mine.data.items[0].code, 'A1');
 });
+
+test('a request body is limited by the bytes that arrive, not by the Content-Length it claims', async () => {
+  const { readBody } = await import('../worker/src/index.js');
+  const stream = (n) => new ReadableStream({ start(c) { for (let i = 0; i < n; i++) c.enqueue(new Uint8Array(1024)); c.close(); } });
+  // No Content-Length at all (a streamed body), 5 KB against a 2 KB limit: refused while reading.
+  const noLength = new Request('https://x/api/db', { method: 'POST', body: stream(5), duplex: 'half' });
+  assert.equal(noLength.headers.get('Content-Length'), null);
+  await assert.rejects(readBody(noLength, 2048), (e) => e.status === 413);
+  // A header that claims less than is sent: still refused.
+  const lying = { headers: new Headers({ 'Content-Length': '10' }), body: stream(5) };
+  await assert.rejects(readBody(lying, 2048), (e) => e.status === 413);
+  // Within the limit: the bytes, whole.
+  assert.equal((await readBody(new Request('https://x', { method: 'POST', body: stream(2), duplex: 'half' }), 2048)).byteLength, 2048);
+});

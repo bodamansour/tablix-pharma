@@ -31,7 +31,10 @@ export async function payStart(env, ctx, b, { fetchImpl = fetch, site = '' } = {
   await env.DB.prepare("INSERT INTO payments (id, pharmacy_id, user_id, months, amount_cents, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)")
     .bind(id, b.pharmacy, ctx.user.id, months, cents, nowIso()).run();
   const ids = String(env.PAYMOB_INTEGRATION_IDS).split(/[,\s]+/).filter(Boolean).map(Number).filter(Number.isFinite);
-  const res = await fetchImpl(`${API}/v1/intention/`, {
+  // A checkout that can't reach Paymob (timeout, connection) is marked failed, never left pending.
+  const fail = async (why) => { await env.DB.prepare("UPDATE payments SET status = 'failed' WHERE id = ? AND status = 'pending'").bind(id).run(); throw new ApiError(`payment error: ${why}`, '502', 502); };
+  let res;
+  try { res = await fetchImpl(`${API}/v1/intention/`, {
     method: 'POST',
     headers: { Authorization: `Token ${env.PAYMOB_SECRET_KEY}`, 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -43,12 +46,9 @@ export async function payStart(env, ctx, b, { fetchImpl = fetch, site = '' } = {
       notification_url: `${site}/api/pay/webhook`,
       redirection_url: `${site}/?paid=1`,
     }),
-  });
+  }); } catch { return fail('unreachable'); }
   const out = await res.json().catch(() => ({}));
-  if (!res.ok || !out.client_secret) {
-    await env.DB.prepare("UPDATE payments SET status = 'failed' WHERE id = ?").bind(id).run();
-    throw new ApiError(`payment error: ${res.status}`, '502', 502);
-  }
+  if (!res.ok || !out.client_secret) return fail(res.status);
   return { url: `${API}/unifiedcheckout/?publicKey=${encodeURIComponent(env.PAYMOB_PUBLIC_KEY)}&clientSecret=${encodeURIComponent(out.client_secret)}`, amount, months };
 }
 

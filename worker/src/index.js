@@ -55,11 +55,32 @@ async function contextOf(env, req) {
   }
   return { user, roles, branchScopes, mainBranches };
 }
-async function body(req, max = 25 * 1024 * 1024) {
-  const n = +(req.headers.get('Content-Length') || 0);
-  if (n > max) throw new ApiError('request too large', '413', 413);
-  try { return await req.json(); } catch { throw new ApiError('bad json', 'PGRST102'); }
+// A request's body, read up to `max` bytes: the size counted as it arrives, not taken from the
+// Content-Length header (which can be missing or wrong), and the reading stopped once it is too large.
+export async function readBody(req, max, tooLarge = 'request too large') {
+  if (+(req.headers.get('Content-Length') || 0) > max) throw new ApiError(tooLarge, '413', 413);
+  if (!req.body) return new Uint8Array(0);
+  const reader = req.body.getReader(), parts = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) { await reader.cancel().catch(() => {}); throw new ApiError(tooLarge, '413', 413); }
+    parts.push(value);
+  }
+  const out = new Uint8Array(size);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.byteLength; }
+  return out;
 }
+const readText = async (req, max, tooLarge) => new TextDecoder().decode(await readBody(req, max, tooLarge));
+async function body(req, max = 25 * 1024 * 1024) {
+  const text = await readText(req, max);
+  try { return JSON.parse(text); } catch { throw new ApiError('bad json', 'PGRST102'); }
+}
+// For handlers that call req.json() themselves (ai.js, pay.js): the same body, read with a limit.
+const limitedJson = (req, max) => ({ json: () => body(req, max) });
 
 // Rows as JSON; uploaded data read from R2 is put in as it is, without parsing it here.
 function rowsJson(rows, blob) {
@@ -127,19 +148,18 @@ async function api(req, env, url, ctx) {
     if (req.method !== 'POST') throw new ApiError('method not allowed', '405', 405);
     const type = req.headers.get('Content-Type') || '';
     if (!['image/jpeg', 'image/webp', 'image/png'].includes(type)) throw new ApiError('bad image', '400', 400);
-    const buf = await req.arrayBuffer();
-    if (buf.byteLength > 300 * 1024) throw new ApiError('image too large', '413', 413);
+    const buf = await readBody(req, 300 * 1024, 'image too large');
     await env.FILES.put(k, buf, { httpMetadata: { contentType: type } });
     return json({ data: null, error: null });
   }
   if (req.method !== 'POST') throw new ApiError('method not allowed', '405', 405);
   // The AI calls go through guardedFetch: refused on staging (egress.js), the real fetch on production.
-  if (path === '/api/ai') return json({ data: await aiChat(env, await contextOf(env, req), req, { fetchImpl: guardedFetch(env) }), error: null });
+  if (path === '/api/ai') return json({ data: await aiChat(env, await contextOf(env, req), limitedJson(req, 2 * 1024 * 1024), { fetchImpl: guardedFetch(env) }), error: null });
   // Subscription payments (Paymob): the checkout goes out through guardedFetch (refused on staging); the
   // webhook is Paymob's signed message, so it needs no sign-in.
   if (path === '/api/pay/start') return json({ data: await payStart(env, await contextOf(env, req), await body(req, 10000), { fetchImpl: guardedFetch(env), site: (env.SITE_URL || url.origin).replace(/\/$/, '') }), error: null });
-  if (path === '/api/pay/webhook') return json({ data: await payWebhook(env, req, url), error: null });
-  if (path === '/api/ai/invoice') return json({ data: await aiInvoice(env, await contextOf(env, req), req, { fetchImpl: guardedFetch(env) }), error: null });
+  if (path === '/api/pay/webhook') return json({ data: await payWebhook(env, limitedJson(req, 64 * 1024), url), error: null });
+  if (path === '/api/ai/invoice') return json({ data: await aiInvoice(env, await contextOf(env, req), limitedJson(req, 8 * 1024 * 1024), { fetchImpl: guardedFetch(env) }), error: null });
   if (path === '/api/db') {
     const q = await body(req);
     const ctx = await contextOf(env, req);
@@ -174,13 +194,13 @@ async function api(req, env, url, ctx) {
     const ctx = await contextOf(env, req);
     const p = url.searchParams.get('pharmacy');
     requireRole(ctx, p, ['owner']);
-    if (+(req.headers.get('Content-Length') || 0) > 20 * 1024 * 1024) throw new ApiError('snapshot too large', '413', 413);
-    const id = await storeSnapshotText(env, p, await branchOf(env, p, url.searchParams.get('branch') || null), ctx.user.id, await req.text(), url.searchParams.get('items'), url.searchParams.get('at'));
+    const text = await readText(req, 20 * 1024 * 1024, 'snapshot too large');
+    const id = await storeSnapshotText(env, p, await branchOf(env, p, url.searchParams.get('branch') || null), ctx.user.id, text, url.searchParams.get('items'), url.searchParams.get('at'));
     return json({ data: id, error: null });
   }
   // The connector sends {"p_token":"…","p_data":<the data>}: the data is taken out as text.
   if (/^\/(?:api\/rpc|rest\/v1\/rpc)\/upload_snapshot$/.test(path)) {
-    const text = await req.text();
+    const text = await readText(req, 21 * 1024 * 1024, 'snapshot too large');
     // Fast path (the data is not parsed: it can be several MB): exactly {"p_token":"…","p_data":{…}} with
     // the data an object and nothing after it but the closing brace. Anything else is parsed whole.
     const head = /^\s*\{\s*"p_token"\s*:\s*("(?:[^"\\]|\\.)*")\s*,\s*"p_data"\s*:\s*(?=\{)/.exec(text.slice(0, 400));
