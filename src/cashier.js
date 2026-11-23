@@ -525,7 +525,7 @@ async function onPin(e) {
         found = { id: row.employee_id, name: row.employee_name, ...(row.cashier_token ? { token: row.cashier_token } : {}) };
         // Kept so the same PIN works with no connection.
         const verifier = await pinVerifier(SESS.pharmacy.id, found.id, pin);
-        STAFF.list = [...STAFF.list.filter((x) => x.id !== found.id), { ...found, verifier }];
+        STAFF.list = [...STAFF.list.filter((x) => x.id !== found.id), { id: found.id, name: found.name, ...(!SESS.local && found.token ? { token: found.token } : {}), verifier }];
         await kvSet(K.staff(), STAFF);
       }
     } else if (!/fetch|network/i.test(error.message)) { $('pinMsg').textContent = arabicError(error).message; return; }
@@ -534,6 +534,10 @@ async function onPin(e) {
   if (!found) { $('pinMsg').textContent = checked || STAFF.list.length ? 'الرقم السري غلط.' : 'مفيش نت، والرقم ده مااتجربش على الجهاز ده قبل كده. ادخل بيه مرة والنت شغال.'; $('pinIn').select(); return; }
   CASHIER = found;
   if (SHIFTS[found.id]) { $('pinDlg').close(); renderCashier(); msg(`أهلاً ${found.name}. ورديتك مفتوحة من ${new Date(SHIFTS[found.id].opened_at).toLocaleTimeString('ar-EG', { hour: 'numeric', minute: '2-digit' })}.`); focusSearch(); return; }
+  if (!found.token) {
+    $('pinDlg').close(); renderCashier();
+    msg('تقدر تسجّل البيع. لفتح وردية جديدة، ادخل برقم الكاشير السري والنت شغال.'); focusSearch(); return;
+  }
   PIN_FOUND = found;
   $('pinTitle').textContent = `أهلاً ${found.name} — وردية جديدة`;
   $('pinIn').hidden = true; $('openCashWrap').hidden = false; $('openCash').value = '0'; $('pinOk').textContent = 'افتح الوردية'; $('pinMsg').textContent = '';
@@ -541,10 +545,14 @@ async function onPin(e) {
 }
 async function openShift(emp) {
   const shift = { id: crypto.randomUUID(), pharmacy_id: SESS.pharmacy.id, branch_id: BRANCH, employee_id: emp.id, employee_name: emp.name,
-    opened_at: new Date().toISOString(), opening_cash: Math.max(0, +$('openCash').value || 0), created_by: SESS.user.id, ...(emp.token ? { cashier_token: emp.token } : {}) };
+    opened_at: new Date().toISOString(), opening_cash: Math.max(0, +$('openCash').value || 0), created_by: SESS.user.id };
+  const row = { ...shift, cashier_token: emp.token };
+  if (SESS.local) {
+    const r = await SESS.client.from('pos_shifts').insert(row);
+    if (r.error) { $('pinMsg').textContent = arabicError(r.error).message; return; }
+  } else await enqueue('insert', { table: 'pos_shifts', row });
   SHIFTS[emp.id] = shift;
   await kvSet(K.shifts(), SHIFTS);
-  await enqueue('insert', { table: 'pos_shifts', row: shift });
   PIN_FOUND = null; CASHIER = emp;
   $('pinDlg').close(); renderCashier(); msg(`اتفتحت وردية ${emp.name}.`); focusSearch(); sync();
 }
@@ -772,27 +780,28 @@ async function checkout() {
     // A home delivery (database update 0004): the fee is inside the total.
     ...(t.fee || ($('delTo').value.trim() && MODE === 'sale') ? { delivery_fee: t.fee, ...($('delTo').value.trim() ? { delivery_to: $('delTo').value.trim() } : {}) } : {}),
     // Who sold it, and in which shift (database update 013).
-    ...(CASHIER ? { employee_id: CASHIER.id, employee_name: CASHIER.name, ...(SHIFTS[CASHIER.id] ? { shift_id: SHIFTS[CASHIER.id].id } : {}), ...(CASHIER.token ? { cashier_token: CASHIER.token } : {}) } : {}),
+    ...(CASHIER ? { employee_id: CASHIER.id, employee_name: CASHIER.name, ...(SHIFTS[CASHIER.id] ? { shift_id: SHIFTS[CASHIER.id].id } : {}) } : {}),
   };
+  const row = CASHIER?.token ? { ...sale, cashier_token: CASHIER.token } : sale;
   const custName = CUST?.name;
   // Where the branch blocks selling below zero (stock kept by the server), a sale goes to the server
   // first and is printed only once the server took it, so the last box is never sold twice. With no
   // connection it is queued as always (and the server checks it when it arrives).
   let sentNow = false;
-  if (MODE === 'sale' && STOCK_POLICY.block && isOnline()) {
-    msg('بنتأكد من الرصيد…');
-    const r = await SESS.client.from('pos_sales').upsert(sale, { onConflict: 'id', ignoreDuplicates: true });
-    if (r.error && !/fetch|network/i.test(r.error.message)) { msg(arabicError(r.error).message, true); return; }
+  if (SESS.local || (MODE === 'sale' && STOCK_POLICY.block && isOnline())) {
+    if (!SESS.local) msg('بنتأكد من الرصيد…');
+    const r = await SESS.client.from('pos_sales').upsert(row, { onConflict: 'id', ignoreDuplicates: true });
+    if (r.error && (SESS.local || !/fetch|network/i.test(r.error.message))) { msg(arabicError(r.error).message, true); return; }
     sentNow = !r.error;
   }
   SALES.unshift({ ...sale, pending: !sentNow });
   await kvSet(K.sales(), SALES);
-  if (!sentNow) await enqueue('insert', { table: 'pos_sales', row: sale }); // the money record is saved before anything else
+  if (!sentNow) await enqueue('insert', { table: 'pos_sales', row }); // the money record is saved before anything else
   try { refreshItems(); } catch (err) { console.error(err); }
   if (dev.autoPrint) printReceipt({ ...sale, return_no: RET?.sale.number });
   // Say exactly what happened: confirmed by the server, or saved on this device and waiting (in a branch
   // that blocks selling below zero, a waiting sale may still be refused when it arrives).
-  const state = sentNow ? ' · السيرفر أكّدها' : isOnline() ? '' : STOCK_POLICY.block ? ' (محفوظة على الجهاز ومستنية النت. الرصيد مش متأكَّد منه: لو صنف خلص على جهاز تاني، السيرفر ممكن يرفضها لما توصل)' : ' (هتترفع لما النت يرجع)';
+  const state = SESS.local ? '' : sentNow ? ' · السيرفر أكّدها' : isOnline() ? '' : STOCK_POLICY.block ? ' (محفوظة على الجهاز ومستنية النت. الرصيد مش متأكَّد منه: لو صنف خلص على جهاز تاني، السيرفر ممكن يرفضها لما توصل)' : ' (هتترفع لما النت يرجع)';
   msg(`${voiding ? `فاتورة ${RET.sale.number} اتلغت` : MODE === 'return' ? 'المرتجع اتسجل' : 'الفاتورة اتسجلت'}: ${sale.number}${cash ? ` · الباقي ${fmt(changeDue(sp.now, paid))} ج` : ''}${sp.credit ? ` · ${fmt(sp.credit)} ج على حساب ${custName}` : ''}${state}`);
   newBill();
   renderDay();
@@ -806,7 +815,7 @@ function receiptHtml(sale) {
   return `<div class="rc-head">${dev.logo ? `<img class="rc-logo" src="${esc(dev.logo)}" alt="">` : ''}<b>${esc(SESS.pharmacy.name)}</b>${branch ? `<div>${esc(branch)}</div>` : ''}
     ${dev.addr ? `<div>${esc(dev.addr)}</div>` : ''}${dev.phone ? `<div class="n">${esc(dev.phone)}</div>` : ''}
     <div>${ret ? 'مرتجع' : 'فاتورة'} رقم <span class="n">${esc(sale.number)}</span></div>${sale.return_no ? `<div>من فاتورة <span class="n">${esc(sale.return_no)}</span></div>` : ''}<div>${esc(when)}</div></div>
-    <table class="rc-lines">${sale.lines.map((l) => `<tr><td colspan="3"><bdi>${esc(l.name)}</bdi></td></tr><tr><td class="n">${l.qty}${+l.per > 1 ? ` ${unitLabel(l)}` : ''} × ${fmt(l.price)}</td><td class="n">${l.discount ? `−${fmt(l.discount)}` : ''}</td><td class="n">${fmt(l.price * l.qty - l.discount)}</td></tr>`).join('')}</table>
+    <table class="rc-lines">${sale.lines.map((l) => `<tr><td colspan="3"><bdi>${esc(l.name)}</bdi></td></tr><tr><td class="n">${esc(l.qty)}${+l.per > 1 ? ` ${unitLabel(l)}` : ''} × ${fmt(l.price)}</td><td class="n">${l.discount ? `−${fmt(l.discount)}` : ''}</td><td class="n">${fmt(l.price * l.qty - l.discount)}</td></tr>`).join('')}</table>
     <div class="rc-tot">${sale.discount ? `<div><span>الخصم</span><span class="n">${fmt(sale.discount)}</span></div>` : ''}${sale.delivery_fee ? `<div><span>التوصيل</span><span class="n">${fmt(sale.delivery_fee)}</span></div>` : ''}
     <div class="big"><span>${ret ? 'المرتجع' : 'الإجمالي'}</span><span class="n">${fmt(Math.abs(sale.total))}</span></div>
     ${vatOf(sale.lines, sale.discount) ? `<div><span>منها ضريبة القيمة المضافة</span><span class="n">${fmt(vatOf(sale.lines, sale.discount))}</span></div>` : ''}

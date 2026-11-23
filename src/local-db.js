@@ -6,8 +6,10 @@ import { checkSaleRow, checkReturnAgainst, checkVoid } from './sale-rules.js';
 
 const DB_NAME = 'saydaliti-local-db'; // separate from the app's offline copy, which sign-out clears
 const USER = { id: '00000000-0000-4000-8000-000000000001', email: 'النسخة المحلية' };
+const CASHIER_TOKEN_MS = 7 * 86400000;
 
 const err = (message) => ({ data: null, error: { message } });
+const cashierDenied = () => ({ data: null, status: 403, error: { code: '42501', message: 'the cashier must sign in with their PIN again on this device' } });
 const now = () => new Date().toISOString();
 const uuid = () => crypto.randomUUID();
 
@@ -47,18 +49,30 @@ export async function createLocalClient(name = DB_NAME) {
     tx.onerror = () => reject(tx.error);
     tx.onabort = () => reject(tx.error);
   });
-  const put = async (t, row) => { table(t).set(String(row.id), row); await write([['put', t, row]]); return row; };
+  const put = async (t, row, logs = []) => { await write([['put', t, row], ...logs]); table(t).set(String(row.id), row); return row; };
   const nextId = (t) => Math.max(0, ...[...table(t).keys()].map(Number).filter(Number.isFinite)) + 1;
 
   const pharmacy = () => [...table('pharmacies').values()][0] || null;
   const branches = (pid) => [...table('branches').values()].filter((b) => b.pharmacy_id === pid).sort((a, b) => a.created_at.localeCompare(b.created_at));
   const mainBranch = (pid) => branches(pid)[0]?.id ?? null;
 
+  // This client has one local user. PIN proofs live only in this client's memory.
+  const cashierProofs = new Map();
+  const cashierVerified = (pharmacyId, employeeId, token, at = Date.now()) => {
+    const proof = cashierProofs.get(token);
+    const employee = table('employees').get(String(employeeId));
+    return !!(proof && employee?.active && employee.pharmacy_id === pharmacyId && proof.pharmacyId === pharmacyId && proof.employeeId === employeeId
+      && proof.createdAt <= at && at < proof.expiresAt);
+  };
+  const forgetCashier = (employeeId) => {
+    for (const [token, proof] of cashierProofs) if (proof.employeeId === employeeId) cashierProofs.delete(token);
+  };
+
   // Who changed what, like the online database's log (database update 013).
   const AUDITED = new Set(['return_approvals', 'catalog_items', 'purchases', 'stock_moves', 'supplier_payments', 'customers', 'customer_payments', 'expenses', 'pos_shifts', 'employees']);
   const strip = (r) => { if (!r) return null; const { pin_hash, ...x } = r; return x; };
   const audit = (t, op, before, after) => {
-    if (!AUDITED.has(t)) return [];
+    if (!AUDITED.has(t) && !(t === 'pos_sales' && op === 'flag')) return [];
     const r = after || before;
     const row = { id: uuid(), pharmacy_id: r.pharmacy_id ?? pharmacy()?.id, at: now(), user_id: USER.id, table_name: t, op, row_id: String(r.id), old_row: strip(before), new_row: strip(after) };
     table('audit_log').set(row.id, row);
@@ -85,6 +99,9 @@ export async function createLocalClient(name = DB_NAME) {
             if (r.id === undefined) r.id = uuid();
             const same = table(t).get(String(r.id));
             if (same && q.ignore) continue;
+            const cashierToken = r.cashier_token;
+            delete r.cashier_token;
+            if (t === 'pos_shifts' && r.employee_id && !cashierVerified(r.pharmacy_id, r.employee_id, cashierToken)) return cashierDenied();
             if (t === 'catalog_items' && [...table(t).values()].some((x) => x.code === r.code && x.id !== r.id && x.pharmacy_id === r.pharmacy_id)) return err('duplicate key value violates unique constraint');
             if (t === 'pos_barcodes' && [...table(t).values()].some((x) => x.barcode === r.barcode && x.id !== r.id)) return err('duplicate key value violates unique constraint');
             // A receipt: the same rules as the online server (src/sale-rules.js), a number used once,
@@ -111,9 +128,11 @@ export async function createLocalClient(name = DB_NAME) {
               r.created_at = now();
             }
             const saved = same ? { ...same, ...r } : r;
-            await put(t, saved);
             const log = audit(t, same ? 'update' : 'insert', same || null, saved);
-            if (log.length) await write(log);
+            if (t === 'pos_sales' && r.employee_id && !cashierVerified(r.pharmacy_id, r.employee_id, cashierToken, Date.parse(r.sold_at))) {
+              log.push(...audit(t, 'flag', null, { id: r.id, pharmacy_id: r.pharmacy_id, number: r.number, sold_at: r.sold_at, received_at: r.created_at, flags: ['cashier_not_verified'] }));
+            }
+            await put(t, saved, log);
           }
           return { data: null, error: null };
         }
@@ -122,6 +141,7 @@ export async function createLocalClient(name = DB_NAME) {
           const list = before.map((r) => ({ ...r, ...q.patch }));
           for (const r of list) table(t).set(String(r.id), r);
           await write([...list.map((r) => ['put', t, r]), ...list.flatMap((r, i) => audit(t, 'update', before[i], r))]);
+          if (t === 'employees') for (const r of list) if (!r.active) forgetCashier(r.id);
           return { data: null, error: null };
         }
         if (q.op === 'delete') {
@@ -207,6 +227,7 @@ export async function createLocalClient(name = DB_NAME) {
       const h = await hashPin(p_pin);
       if ([...table('employees').values()].some((x) => x.id !== e.id && x.active && x.pin_hash === h)) return err('PIN already used');
       await put('employees', { ...e, pin_hash: h });
+      forgetCashier(e.id);
       return { data: null, error: null };
     },
     async cashier_staff({ p_pharmacy }) {
@@ -215,16 +236,21 @@ export async function createLocalClient(name = DB_NAME) {
     async cashier_pin({ p_pharmacy, p_pin }) {
       const h = await hashPin(p_pin);
       const e = [...table('employees').values()].find((x) => x.pharmacy_id === p_pharmacy && x.active && x.pin_hash === h);
-      return { data: e ? [{ employee_id: e.id, employee_name: e.name }] : [], error: null };
+      if (!e) return { data: [], error: null };
+      const createdAt = Date.now();
+      for (const [token, proof] of cashierProofs) if (proof.expiresAt <= createdAt) cashierProofs.delete(token);
+      const token = [...crypto.getRandomValues(new Uint8Array(32))].map((b) => b.toString(16).padStart(2, '0')).join('');
+      cashierProofs.set(token, { pharmacyId: p_pharmacy, employeeId: e.id, createdAt, expiresAt: createdAt + CASHIER_TOKEN_MS });
+      return { data: [{ employee_id: e.id, employee_name: e.name, cashier_token: token }], error: null };
     },
     // Same rules as the online server (worker/src/rpc.js approve_no_receipt_return).
-    async approve_no_receipt_return({ p_pharmacy, p_branch = null, p_return_id, p_total, p_reason, p_cashier, p_pin }) {
+    async approve_no_receipt_return({ p_pharmacy, p_branch = null, p_return_id, p_total, p_reason, p_cashier, p_cashier_token, p_pin }) {
       const total = Math.round(+p_total * 100) / 100;
       const reason = String(p_reason ?? '').trim();
       if (!Number.isFinite(total) || total >= 0) return err('bad return total');
       if (!reason || reason.length > 300) return err('a return without a receipt needs a reason');
       const cashier = table('employees').get(String(p_cashier));
-      if (!cashier || !cashier.active || cashier.pharmacy_id !== p_pharmacy) return err('the cashier must sign in with their PIN first');
+      if (!cashierVerified(p_pharmacy, p_cashier, p_cashier_token)) return cashierDenied();
       const h = await hashPin(p_pin);
       const approver = [...table('employees').values()].find((x) => x.pharmacy_id === p_pharmacy && x.active && x.pin_hash === h);
       if (!approver) return err('wrong pin');
@@ -296,6 +322,7 @@ export async function createLocalClient(name = DB_NAME) {
       });
       for (const k of Object.keys(T)) delete T[k];
       for (const [t, r] of rows) table(t).set(String(r.id), r);
+      cashierProofs.clear();
     },
   };
 }

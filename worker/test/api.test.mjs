@@ -237,7 +237,9 @@ test('a return without a receipt needs a manager the owner allowed, approving wi
   assert.match((await approve(bare, { p_pin: '482915' })).error.message, /another employee/);
   assert.match((await approve(bare, { p_cashier: uuid() })).error.message, /sign in with their PIN/);
   assert.match((await approve(bare, { p_reason: '  ' })).error.message, /needs a reason/);
-  assert.match((await approve(bare, { p_cashier_token: undefined })).error.message, /sign in with their PIN again/, 'no PIN sign-in on this device: refused');
+  const withoutProof = await approve(bare, { p_cashier_token: undefined });
+  assert.equal(withoutProof.status, 403);
+  assert.match(withoutProof.error.message, /sign in with their PIN again/);
   assert.match((await approve(bare, { p_total: 30 })).error.message, /bad return total/);
   // Approved: the approval is for this return, this amount and this cashier only.
   const ok = await approve(bare);
@@ -255,10 +257,10 @@ test('a return without a receipt needs a manager the owner allowed, approving wi
   // The record: the approval (who sold, who approved, why, how much) and the return, in the log of changes.
   const appr = (await owner.select('return_approvals', 'return_id, total, reason, cashier_name, approver_name', [['id', 'eq', ok.data.approval_id]])).data[0];
   assert.deepEqual(appr, { return_id: bare.id, total: -30, reason: 'العميل نسي الفاتورة', cashier_name: 'كاشير المرتجع', approver_name: 'مدير الوردية' });
-  const log = (await owner.select('audit_log', 'table_name, op', [['pharmacy_id', 'eq', P], ['row_id', 'in', [bare.id, ok.data.approval_id]]])).data;
+  const log = (await owner.select('audit_log', 'table_name, op, new_row', [['pharmacy_id', 'eq', P], ['row_id', 'in', [bare.id, ok.data.approval_id]]])).data;
   assert.deepEqual([...new Set(log.map((r) => r.table_name))].sort(), ['pos_sales', 'return_approvals']);
   // This test's device sends no cashier_pin token: the return is taken and marked for the owner.
-  assert.ok(log.some((r) => r.table_name === 'pos_sales' && r.op === 'flag'));
+  assert.ok(log.some((r) => r.table_name === 'pos_sales' && r.op === 'flag' && r.new_row.flags.includes('cashier_not_verified')));
   // Approvals are written only by the server: nobody can add or change one through the data API.
   assert.equal((await owner.insert('return_approvals', { id: uuid(), pharmacy_id: P, return_id: uuid(), total: -1, reason: 'x', cashier_employee_id: cashierId, cashier_name: 'x', approver_employee_id: managerId, approver_name: 'x', created_at: now() })).status, 403);
   assert.equal((await owner.db({ op: 'delete', table: 'return_approvals', filters: [['id', 'eq', ok.data.approval_id]] })).status, 403);
@@ -419,7 +421,11 @@ test('cashier PIN, shifts, and the log of changes', { skip }, async () => {
   assert.equal(e.employee_name, 'سارة');
   assert.deepEqual((await device.rpc('cashier_pin', { p_pharmacy: P, p_pin: '9999' })).data, []);
   const shift = uuid();
-  assert.equal((await device.insert('pos_shifts', { id: shift, pharmacy_id: P, branch_id: B, employee_id: e.employee_id, employee_name: 'سارة', opened_at: new Date().toISOString(), opening_cash: 100 })).error, null);
+  const opening = { id: shift, pharmacy_id: P, branch_id: B, employee_id: e.employee_id, employee_name: 'سارة', opened_at: now(), opening_cash: 100 };
+  assert.equal((await device.insert('pos_shifts', opening)).status, 403, 'an employee shift without proof is refused');
+  assert.equal((await owner.insert('pos_shifts', { ...opening, cashier_token: e.cashier_token })).status, 403, 'proof is bound to the account');
+  assert.equal((await owner.select('pos_shifts', 'id', [['id', 'eq', shift]])).data.length, 0);
+  assert.equal((await device.insert('pos_shifts', { ...opening, cashier_token: e.cashier_token })).error, null);
   assert.equal((await device.db({ op: 'update', table: 'pos_shifts', patch: { closed_at: new Date().toISOString(), counted_cash: 90, expected_cash: 100 }, filters: [['id', 'eq', shift]] })).error, null);
   await device.db({ op: 'update', table: 'pos_shifts', patch: { counted_cash: 1000 }, filters: [['id', 'eq', shift]] });
   assert.equal((await owner.select('pos_shifts', 'counted_cash', [['id', 'eq', shift]])).data[0].counted_cash, 90, 'a closed shift is not changed');

@@ -271,12 +271,10 @@ export const RPC = {
     if (!Number.isFinite(total) || total >= 0 || total < -99999999.99) throw new ApiError('bad return total');
     const reason = String(p_reason ?? '').trim();
     if (!reason || reason.length > 300) throw new ApiError('a return without a receipt needs a reason');
-    if (!isId(p_cashier)) throw new ApiError('the cashier must sign in with their PIN first');
+    if (!isId(p_cashier)) throw new ApiError('the cashier must sign in with their PIN first', '42501', 403);
+    await requireCashierProof(env, ctx, p_pharmacy, p_cashier, p_cashier_token);
     const cashier = await one(env, 'SELECT id, name FROM employees WHERE id = ? AND pharmacy_id = ? AND active = 1', p_cashier, p_pharmacy);
-    if (!cashier) throw new ApiError('the cashier must sign in with their PIN first');
-    // Asked with the connection on, so the cashier's PIN sign-in on this device must be shown: a token for
-    // another cashier or device, an expired one, or none at all (an app from before 2026-11-23) is refused.
-    if (await cashierCheck(env, ctx, p_pharmacy, cashier.id, p_cashier_token) !== 'ok') throw new ApiError('the cashier must sign in with their PIN again on this device', '42501', 403);
+    if (!cashier) throw new ApiError('the cashier must sign in with their PIN first', '42501', 403);
     const approver = await pinEmployee(env, ctx, p_pharmacy, p_pin, 'wrong pin');
     const can = await one(env, 'SELECT can_approve_returns FROM employees WHERE id = ?', approver.id);
     if (!can?.can_approve_returns) throw new ApiError('this employee may not approve returns', '42501', 403);
@@ -468,7 +466,7 @@ async function pinEmployee(env, ctx, pharmacyId, pin, wrongMessage) {
 const CASHIER_TOKEN_MS = 7 * 86400000;
 // 'ok': the employee typed their PIN on this account within 7 days. 'none': no token was sent (an older
 // app, or a PIN checked only on the device). 'stale': a token the server no longer knows (expired, the
-// PIN changed, the employee was stopped). Refused: a token that names another employee, pharmacy or account.
+// PIN changed, the employee was stopped). 'mismatch': a token for another employee, pharmacy or account.
 // `at`: the time the token had to be valid (a receipt's sold_at; now by default).
 export async function cashierCheck(env, ctx, pharmacyId, employeeId, token, at = nowIso()) {
   if (!employeeId) return 'ok';
@@ -476,11 +474,15 @@ export async function cashierCheck(env, ctx, pharmacyId, employeeId, token, at =
   const t = await one(env, `SELECT t.pharmacy_id, t.employee_id, t.user_id, t.created_at, t.expires_at, e.active FROM cashier_tokens t
     LEFT JOIN employees e ON e.id = t.employee_id WHERE t.token_hash = ?`, await sha256(token));
   if (!t) return 'stale';
-  if (t.pharmacy_id !== String(pharmacyId) || t.employee_id !== String(employeeId) || t.user_id !== ctx.user?.id) {
-    throw new ApiError('the cashier must sign in with their PIN on this device', '42501', 403);
-  }
+  if (t.pharmacy_id !== String(pharmacyId) || t.employee_id !== String(employeeId) || t.user_id !== ctx.user?.id) return 'mismatch';
   const when = Number.isFinite(Date.parse(at)) ? new Date(Date.parse(at)).toISOString() : nowIso();
   return t.active && t.expires_at > when && t.created_at <= new Date(Date.parse(when) + SKEW).toISOString() ? 'ok' : 'stale';
+}
+
+export async function requireCashierProof(env, ctx, pharmacyId, employeeId, token) {
+  if (!employeeId || await cashierCheck(env, ctx, pharmacyId, employeeId, token) !== 'ok') {
+    throw new ApiError('the cashier must sign in with their PIN again on this device', '42501', 403);
+  }
 }
 
 // ---------- Moving in a full backup ----------
