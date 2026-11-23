@@ -153,3 +153,16 @@ test('someone already in the pharmacy who sends a fresh code does not use it up'
   assert.equal((await e.DB.prepare("SELECT role FROM members WHERE pharmacy_id = ? AND user_id = 'u-old'").bind(p).first()).role, 'pharmacist', 'the role is unchanged');
   assert.equal(await RPC.join_pharmacy(e, ctxOf('u-new'), { p_code: code }), p, 'the person it was made for gets in');
 });
+
+test('two invitations redeemed together by the same user consume only one code', async () => {
+  const e = env();
+  const { p, owner } = await pharmacy(e);
+  const args = { p_pharmacy: p, p_role: 'pharmacist' };
+  const codes = [await RPC.create_invite(e, owner, args), await RPC.create_invite(e, owner, args)];
+  serializeBatches(e.DB);
+  const member = ctxOf('u-new');
+  assert.deepEqual(await Promise.all(codes.map((p_code) => RPC.join_pharmacy(e, member, { p_code }))), [p, p]);
+  const invite = await e.DB.prepare('SELECT code FROM invites WHERE pharmacy_id = ? AND used_by IS NULL').bind(p).all();
+  assert.equal(invite.results.length, 1);
+  assert.equal(await RPC.join_pharmacy(e, ctxOf('u-other'), { p_code: invite.results[0].code }), p);
+});
