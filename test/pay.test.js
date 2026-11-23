@@ -90,6 +90,48 @@ test('paid ahead adds after the end; a suspended pharmacy stays suspended', asyn
   }
 });
 
+test('a failed settlement leaves the payment and subscription unchanged, then can be retried', async () => {
+  const env = setup(), calls = [];
+  await payStart(env, owner, { pharmacy: P, months: 1 }, { fetchImpl: paymob(calls) });
+  const ref = calls[0].body.special_reference;
+  const today = new Date('2026-11-13T00:00:00');
+  const state = () => [env.DB.raw.prepare('SELECT status FROM payments WHERE id = ?').get(ref).status,
+    env.DB.raw.prepare('SELECT status FROM subscriptions WHERE pharmacy_id = ?').get(P).status];
+  for (const table of ['subscriptions', 'payments']) {
+    env.DB.raw.exec(`CREATE TRIGGER fail_settlement BEFORE UPDATE ON ${table} BEGIN SELECT RAISE(ABORT, 'test write failed'); END;`);
+    const [req, url] = await signed(env, txn(ref, 40000));
+    await assert.rejects(payWebhook(env, req, url, { today }), /test write failed/);
+    assert.deepEqual(state(), ['pending', 'trial']);
+    env.DB.raw.exec('DROP TRIGGER fail_settlement');
+  }
+  const [req, url] = await signed(env, txn(ref, 40000));
+  assert.deepEqual(await payWebhook(env, req, url, { today }), { paid: true, until: '2026-12-20' });
+  assert.deepEqual(state(), ['paid', 'active']);
+});
+
+test('two settlements extend the subscription even if both read the same starting term', async () => {
+  const env = setup(), calls = [];
+  await payStart(env, owner, { pharmacy: P, months: 1 }, { fetchImpl: paymob(calls) });
+  await payStart(env, owner, { pharmacy: P, months: 1 }, { fetchImpl: paymob(calls) });
+  const today = new Date('2026-11-13T00:00:00');
+  const [firstReq, firstUrl] = await signed(env, txn(calls[0].body.special_reference, 40000));
+  const [secondReq, secondUrl] = await signed(env, txn(calls[1].body.special_reference, 40000, { id: 9002 }));
+  const prepare = env.DB.prepare;
+  env.DB.prepare = (sql) => {
+    const stmt = prepare(sql);
+    if (!sql.startsWith('SELECT status, trial_ends, paid_until FROM subscriptions')) return stmt;
+    return { bind(...args) { return { async first() {
+      const old = await stmt.bind(...args).first();
+      env.DB.prepare = prepare;
+      assert.equal((await payWebhook(env, secondReq, secondUrl, { today })).until, '2026-12-20');
+      return old;
+    } }; } };
+  };
+  assert.deepEqual(await payWebhook(env, firstReq, firstUrl, { today }), { paid: true, until: '2027-01-20' });
+  assert.equal(env.DB.raw.prepare("SELECT count(*) AS count FROM payments WHERE status = 'paid'").get().count, 2);
+  assert.equal(env.DB.raw.prepare('SELECT paid_until FROM subscriptions WHERE pharmacy_id = ?').get(P).paid_until, '2027-01-20');
+});
+
 test('a checkout that cannot reach Paymob is marked failed, not left pending', async () => {
   const env = setup();
   const down = async () => { throw new TypeError('network connection lost'); };
