@@ -89,3 +89,11 @@ test('paid ahead adds after the end; a suspended pharmacy stays suspended', asyn
     assert.equal((await env.DB.prepare('SELECT status FROM subscriptions WHERE pharmacy_id = ?').bind(P).first()).status, expect);
   }
 });
+
+test('a checkout that cannot reach Paymob is marked failed, not left pending', async () => {
+  const env = setup();
+  const down = async () => { throw new TypeError('network connection lost'); };
+  await assert.rejects(payStart(env, owner, { pharmacy: P, months: 1 }, { fetchImpl: down, site: 'https://t' }), /payment error: unreachable/);
+  const rows = (await env.DB.prepare('SELECT status FROM payments WHERE pharmacy_id = ?').bind(P).all()).results;
+  assert.deepEqual(rows.map((r) => r.status), ['failed']);
+});

@@ -158,8 +158,8 @@ test('every outbound call in the Worker goes through an injected or guarded fetc
     assert.doesNotMatch(code, /cloudflare:sockets|\bconnect\(|new WebSocket|EmailMessage|globalThis\.fetch|const \w+ = fetch\b/, `${f}: an outbound path the guard does not cover`);
   }
   const index = read('worker/src/index.js');
-  assert.match(index, /aiChat\(env, await contextOf\(env, req\), req, \{ fetchImpl: guardedFetch\(env\) \}\)/, '/api/ai gets guardedFetch');
-  assert.match(index, /aiInvoice\(env, await contextOf\(env, req\), req, \{ fetchImpl: guardedFetch\(env\) \}\)/, '/api/ai/invoice gets guardedFetch');
+  assert.match(index, /aiChat\(env, await contextOf\(env, req\), limitedJson\(req, [^)]*\), \{ fetchImpl: guardedFetch\(env\) \}\)/, '/api/ai gets guardedFetch');
+  assert.match(index, /aiInvoice\(env, await contextOf\(env, req\), limitedJson\(req, [^)]*\), \{ fetchImpl: guardedFetch\(env\) \}\)/, '/api/ai/invoice gets guardedFetch');
 });
 
 test('staging: the global fetch refuses other http and https requests; production keeps the real fetch', async () => {

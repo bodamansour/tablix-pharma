@@ -41,6 +41,11 @@ export const TABLES = {
   app_secrets: { pk: 'name', internal: true, cols: { name: ['text', { nn: true }], hash: ['text', { nn: true }], created_at: ['ts', { nn: true, def: 'now' }] } },
   invite_attempts: { pk: null, internal: true, cols: { user_id: ['id', { nn: true }], at: ['ts', { nn: true, def: 'now' }] }, index: [['user_id', 'at']] },
   pin_attempts: { pk: null, internal: true, cols: { user_id: ['id', { nn: true }], at: ['ts', { nn: true, def: 'now' }] }, index: [['user_id', 'at']] },
+  // A cashier's PIN sign-in on a device (only the token's hash), valid 7 days (migration 0020; rpc.js cashierCheck).
+  cashier_tokens: { pk: 'token_hash', internal: true, added: 20, cols: {
+    token_hash: ['text', { nn: true }], pharmacy_id: ['id', { nn: true }], employee_id: ['id', { nn: true }], user_id: ['id', { nn: true }],
+    created_at: ['ts', { nn: true }], expires_at: ['ts', { nn: true }] },
+  index: [['employee_id'], ['expires_at']] },
 
   // ---------- Pharmacy ----------
   pharmacies: { pk: 'id', tenant: 'id', read: ROLES_ALL, cols: {

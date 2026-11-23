@@ -521,7 +521,8 @@ async function onPin(e) {
       checked = true;
       const row = Array.isArray(data) ? data[0] : data;
       if (row?.employee_id) {
-        found = { id: row.employee_id, name: row.employee_name };
+        // The server's proof of this PIN sign-in, sent with this cashier's receipts, shift and returns.
+        found = { id: row.employee_id, name: row.employee_name, ...(row.cashier_token ? { token: row.cashier_token } : {}) };
         // Kept so the same PIN works with no connection.
         const verifier = await pinVerifier(SESS.pharmacy.id, found.id, pin);
         STAFF.list = [...STAFF.list.filter((x) => x.id !== found.id), { ...found, verifier }];
@@ -540,7 +541,7 @@ async function onPin(e) {
 }
 async function openShift(emp) {
   const shift = { id: crypto.randomUUID(), pharmacy_id: SESS.pharmacy.id, branch_id: BRANCH, employee_id: emp.id, employee_name: emp.name,
-    opened_at: new Date().toISOString(), opening_cash: Math.max(0, +$('openCash').value || 0), created_by: SESS.user.id };
+    opened_at: new Date().toISOString(), opening_cash: Math.max(0, +$('openCash').value || 0), created_by: SESS.user.id, ...(emp.token ? { cashier_token: emp.token } : {}) };
   SHIFTS[emp.id] = shift;
   await kvSet(K.shifts(), SHIFTS);
   await enqueue('insert', { table: 'pos_shifts', row: shift });
@@ -700,7 +701,7 @@ function askApproval(returnId, total, reason) {
       $('apprPin').value = '';
       if (!/^\d{4,6}$/.test(pin)) { $('apprMsg').textContent = 'الرقم السري 4 لـ 6 أرقام.'; return; }
       $('apprMsg').textContent = 'بنتأكد…';
-      const r = await SESS.client.rpc('approve_no_receipt_return', { p_pharmacy: SESS.pharmacy.id, p_branch: BRANCH, p_return_id: returnId, p_total: total, p_reason: reason, p_cashier: CASHIER.id, p_pin: pin });
+      const r = await SESS.client.rpc('approve_no_receipt_return', { p_pharmacy: SESS.pharmacy.id, p_branch: BRANCH, p_return_id: returnId, p_total: total, p_reason: reason, p_cashier: CASHIER.id, ...(CASHIER.token ? { p_cashier_token: CASHIER.token } : {}), p_pin: pin });
       if (r.error) { $('apprMsg').textContent = arabicError(r.error).message; $('apprPin').focus(); return; }
       done(r.data);
     };
@@ -771,7 +772,7 @@ async function checkout() {
     // A home delivery (database update 0004): the fee is inside the total.
     ...(t.fee || ($('delTo').value.trim() && MODE === 'sale') ? { delivery_fee: t.fee, ...($('delTo').value.trim() ? { delivery_to: $('delTo').value.trim() } : {}) } : {}),
     // Who sold it, and in which shift (database update 013).
-    ...(CASHIER ? { employee_id: CASHIER.id, employee_name: CASHIER.name, ...(SHIFTS[CASHIER.id] ? { shift_id: SHIFTS[CASHIER.id].id } : {}) } : {}),
+    ...(CASHIER ? { employee_id: CASHIER.id, employee_name: CASHIER.name, ...(SHIFTS[CASHIER.id] ? { shift_id: SHIFTS[CASHIER.id].id } : {}), ...(CASHIER.token ? { cashier_token: CASHIER.token } : {}) } : {}),
   };
   const custName = CUST?.name;
   // Where the branch blocks selling below zero (stock kept by the server), a sale goes to the server
