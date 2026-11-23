@@ -180,9 +180,12 @@ test('backup to a file and back', async () => {
   const file = join(await mkdtemp(join(tmpdir(), 'sd-')), 'old.json');
   // A broken copy (a row with no id, or a cut-off file) is refused and nothing changes.
   const broken = join(await mkdtemp(join(tmpdir(), 'sd-')), 'broken.json');
-  await writeFile(broken, JSON.stringify({ ...dump, tables: { ...dump.tables, purchases: [{ lines: [] }] } }));
+  await writeFile(broken, JSON.stringify(dump));
   await page.setInputFiles('#restoreFile', broken);
-  assert.ok(await until(async () => /فيها مشكلة/.test(await text('#backupMsg'))));
+  assert.ok(await until(async () => /بصمة النسخة الاحتياطية غير مطابقة/.test(await text('#backupMsg'))));
+  await writeFile(broken, JSON.stringify({ ...dump, fingerprint: undefined, tables: { ...dump.tables, purchases: [{ lines: [] }] } }));
+  await page.setInputFiles('#restoreFile', broken);
+  assert.ok(await until(async () => /صف ناقص/.test(await text('#backupMsg'))));
   await writeFile(broken, JSON.stringify(dump).slice(0, 500));
   await page.setInputFiles('#restoreFile', broken);
   assert.ok(await until(async () => /ناقص أو بايظ/.test(await text('#backupMsg'))));
@@ -194,6 +197,7 @@ test('backup to a file and back', async () => {
   assert.ok(await until(async () => /15/.test(await text('#itemsBody tr'))), 'the data on the computer is unchanged');
   await openTools(page);
   await page.click('#localBox summary');
+  dump.fingerprint = await page.evaluate(async (tables) => (await import('./src/local-db.js')).backupFingerprint(tables), dump.tables);
   await writeFile(file, JSON.stringify(dump));
   await page.setInputFiles('#restoreFile', file);
   await page.waitForSelector('#app:not([hidden])');

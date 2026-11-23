@@ -32,7 +32,7 @@ async function hashPin(pin) {
 
 export async function createLocalClient(name = DB_NAME) {
   const idb = await openDb(name);
-  const T = {}; // table -> Map(id -> row)
+  const T = Object.create(null); // table -> Map(id -> row)
   await new Promise((resolve, reject) => {
     const q = idb.transaction('rows').objectStore('rows').getAll();
     q.onsuccess = () => { for (const { t, v } of q.result) (T[t] ||= new Map()).set(String(v.id), v); resolve(); };
@@ -299,6 +299,7 @@ export async function createLocalClient(name = DB_NAME) {
     async importAll(dump) {
       const bad = (why) => { throw new Error(`النسخة الاحتياطية دي فيها مشكلة (${why})، والبيانات اللي على الجهاز ماتغيرتش.`); };
       if (dump?.app !== 'saydaliti' || !dump.tables || typeof dump.tables !== 'object' || Array.isArray(dump.tables)) throw new Error('الملف ده مش نسخة احتياطية من Tablix Pharma.');
+      if (dump.fingerprint != null && (typeof dump.fingerprint !== 'string' || dump.fingerprint !== await backupFingerprint(dump.tables))) bad('بصمة النسخة الاحتياطية غير مطابقة');
       const rows = [];
       for (const [t, list] of Object.entries(dump.tables)) {
         if (!/^[a-z_]{1,40}$/.test(t) || !Array.isArray(list)) bad(`جدول «${t}»`);
@@ -349,7 +350,6 @@ function canonical(value) {
 
 export async function verifyLocalBackup(dump) {
   const fingerprinted = dump?.fingerprint != null;
-  if (fingerprinted && (typeof dump.fingerprint !== 'string' || dump.fingerprint !== await backupFingerprint(dump.tables))) throw new Error('بصمة النسخة الاحتياطية غير مطابقة.');
   const name = `saydaliti-backup-check-${crypto.randomUUID()}`;
   const client = await createLocalClient(name);
   try {
