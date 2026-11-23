@@ -24,7 +24,7 @@ const run = (env, sql, ...args) => env.DB.prepare(sql).bind(...args).run();
 
 export async function aiChat(env, ctx, req, { fetchImpl = fetch } = {}) {
   if (!env.ANTHROPIC_API_KEY) throw new ApiError('ai not configured', '501', 501);
-  const b = await req.json().catch(() => null);
+  const b = await req.json();
   if (!b || typeof b.pharmacy !== 'string' || !Array.isArray(b.messages) || !Array.isArray(b.tools)) throw new ApiError('bad request', '400', 400);
   const role = ctx.roles.get(b.pharmacy);
   if (!['owner', 'partner', 'accountant', 'stock'].includes(role)) throw new ApiError('not allowed', '42501', 403);
@@ -61,7 +61,7 @@ cost = سعر الشراء للعلبة الواحدة، price = سعر الجم
 const MEDIA = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 export async function aiInvoice(env, ctx, req, { fetchImpl = fetch } = {}) {
   if (!env.ANTHROPIC_API_KEY) throw new ApiError('ai not configured', '501', 501);
-  const b = await req.json().catch(() => null);
+  const b = await req.json();
   if (!b || typeof b.pharmacy !== 'string' || !MEDIA.has(b.media_type) || typeof b.data !== 'string') throw new ApiError('bad request', '400', 400);
   if (ctx.roles.get(b.pharmacy) !== 'owner') throw new ApiError('not allowed', '42501', 403);
   if (!(await planFor(env, b.pharmacy)).features.includes('ai')) throw new ApiError('not in plan', '402', 402);

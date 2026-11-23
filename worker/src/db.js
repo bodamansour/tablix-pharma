@@ -191,8 +191,10 @@ export function requireBranch(ctx, pharmacyId, branchId) {
 }
 
 function whereOf(t, table, filters = []) {
+  if (!Array.isArray(filters)) throw new ApiError('bad filters', 'PGRST100');
   const parts = [], args = [];
   for (const f of filters) {
+    if (!Array.isArray(f) || f.length < 2 || f.length > 3 || (f.length === 2 && !['notnull', 'isnull'].includes(f[1]))) throw new ApiError('bad filter', 'PGRST100');
     const [col, op, val] = f;
     const [type] = visibleSpec(t, table, col);
     if (op === 'eq') { if (val === null) parts.push(`${col} IS NULL`); else { parts.push(`${col} = ?`); args.push(toDb(type, val)); } }
@@ -211,6 +213,7 @@ function whereOf(t, table, filters = []) {
 
 function columnsOf(t, table, cols) {
   const raw = String(cols || '*').split(',').map((c) => c.trim()).filter(Boolean);
+  if (!raw.length) throw new ApiError('no selected columns', 'PGRST100');
   const all = Object.keys(t.cols).filter((c) => !(t.hidden || []).includes(c));
   const out = [];
   let blob = false;
@@ -235,9 +238,12 @@ export async function select(ctx, env, q) {
   const where = [scope.sql, ...w.parts].filter(Boolean);
   let sql = `SELECT ${[...new Set([...cols, ...(blob ? [t.pk] : [])])].join(', ')} FROM ${table}${where.length ? ` WHERE ${where.join(' AND ')}` : ''}`;
   if (q.order) { visibleSpec(t, table, q.order.col); sql += ` ORDER BY ${q.order.col} ${q.order.asc === false ? 'DESC' : 'ASC'}`; }
-  const lim = q.range ? Math.max(0, q.range[1] - q.range[0] + 1) : q.limit;
-  const n = Math.min(lim ?? 1000, 1000); // like the server's 1,000-row pages
-  sql += ` LIMIT ${n}${q.range ? ` OFFSET ${Math.max(0, +q.range[0] | 0)}` : ''}`;
+  const nonnegativeInt = (v) => Number.isSafeInteger(v) && v >= 0;
+  const range = q.range;
+  if (range != null && (!Array.isArray(range) || range.length !== 2 || !range.every(nonnegativeInt) || range[1] < range[0])) throw new ApiError('bad range', 'PGRST100');
+  if (q.limit != null && !nonnegativeInt(q.limit)) throw new ApiError('bad limit', 'PGRST100');
+  const n = Math.min(range ? range[1] - range[0] + 1 : q.limit ?? 1000, 1000);
+  sql += ` LIMIT ${n}${range ? ` OFFSET ${range[0]}` : ''}`;
   const res = await env.DB.prepare(sql).bind(...scope.args, ...w.args).all();
   const rows = res.results.map((r) => fromDb(t, r));
   if (!blob) return { rows };
@@ -336,7 +342,7 @@ export async function insert(ctx, env, q, hooks = {}) {
   }
   if (stmts.length) {
     try { await runBatch(env, stmts); } catch (e) {
-      if (guarded.length && /NOT NULL constraint failed: pos_sales\.id/i.test(String(e?.message))) {
+      if (guarded.length && /NOT NULL constraint failed: pos_sales\.id/i.test(String(e?.cause?.message ?? e?.message))) {
         // Which guard refused it: the number already used, or a return of more than is left.
         // (Nothing of this request was stored: the whole batch was rolled back.)
         const inRequest = new Set();
@@ -424,8 +430,9 @@ export async function remove(ctx, env, q) {
 export async function runBatch(env, stmts) {
   try { return await env.DB.batch(stmts); } catch (e) {
     const m = String(e?.message ?? e);
-    if (/UNIQUE constraint failed/i.test(m)) throw new ApiError(`duplicate key value violates unique constraint (${m.split('failed:')[1]?.trim() || ''})`, '23505', 409);
-    if (/FOREIGN KEY|NOT NULL/i.test(m)) throw new ApiError(m, '23502');
+    if (/UNIQUE constraint failed/i.test(m)) throw new ApiError('duplicate key value violates unique constraint', '23505', 409);
+    if (/FOREIGN KEY/i.test(m)) throw new ApiError('invalid related record', '23503');
+    if (/NOT NULL/i.test(m)) throw Object.assign(new ApiError('required value missing', '23502'), { cause: e });
     throw e;
   }
 }

@@ -67,7 +67,7 @@ const same = (a, b) => { if (a.length !== b.length) return false; let d = 0; for
 
 export async function payWebhook(env, req, url, { today } = {}) {
   if (!payReady(env)) throw new ApiError('payments not configured', '501', 501);
-  const b = await req.json().catch(() => null);
+  const b = await req.json().catch((err) => { if (err?.status === 413) throw err; return null; });
   const obj = b?.obj;
   if (!obj || b.type !== 'TRANSACTION') return { ignored: true };
   const given = String(url.searchParams.get('hmac') || '').toLowerCase();

@@ -77,7 +77,10 @@ export async function readBody(req, max, tooLarge = 'request too large') {
 const readText = async (req, max, tooLarge) => new TextDecoder().decode(await readBody(req, max, tooLarge));
 async function body(req, max = 25 * 1024 * 1024) {
   const text = await readText(req, max);
-  try { return JSON.parse(text); } catch { throw new ApiError('bad json', 'PGRST102'); }
+  let value;
+  try { value = JSON.parse(text); } catch { throw new ApiError('bad json', 'PGRST102'); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApiError('expected a JSON object', 'PGRST102');
+  return value;
 }
 // For handlers that call req.json() themselves (ai.js, pay.js): the same body, read with a limit.
 const limitedJson = (req, max) => ({ json: () => body(req, max) });
