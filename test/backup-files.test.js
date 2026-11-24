@@ -73,3 +73,26 @@ test('keeping the newest backups deletes the old ones\' files too; a failed back
   assert.equal([...FILES.map.keys()].filter((k) => /\.sdbk\.f\d+$/.test(k)).length, RETAIN, 'the failed backup\'s file was removed');
   assert.equal(DB.raw.prepare("SELECT count(*) AS n FROM backups WHERE status = 'failed'").get().n, 1);
 });
+
+test('a missing source snapshot fails the backup', async () => {
+  const { env, FILES, DB } = setup(2);
+  FILES.map.delete('snapshots/2.json');
+  await assert.rejects(runBackup(env, P), /backup source snapshot missing/);
+  assert.deepEqual(DB.raw.prepare('SELECT status FROM backups').all().map((b) => b.status), ['failed']);
+  assert.equal([...FILES.map.keys()].some((k) => k.startsWith('backups/')), false);
+});
+
+test('a retention failure preserves the new backup and its snapshot files', async () => {
+  const { env, FILES, DB } = setup(1);
+  const insert = DB.raw.prepare("INSERT INTO backups (id, pharmacy_id, created_at, status, r2_key, source) VALUES (?, ?, ?, 'ok', ?, 'daily')");
+  for (let i = 0; i < RETAIN; i++) insert.run(`old-${i}`, P, '2026-01-01T00:00:00Z', `backups/old-${i}.sdbk`);
+  const del = FILES.delete;
+  FILES.delete = async (keys) => {
+    if (keys.some((key) => key.startsWith('backups/old-'))) throw new Error('test retention failure');
+    return del(keys);
+  };
+  const b = await runBackup(env, P);
+  const dump = JSON.parse(await decryptBackup(env, P, await (await FILES.get(b.key)).arrayBuffer()));
+  assert.equal(Object.keys((await loadBlobFiles(env, P, dump)).blobs).length, 1);
+  assert.equal(DB.raw.prepare('SELECT status FROM backups WHERE id = ?').get(b.id).status, 'ok');
+});

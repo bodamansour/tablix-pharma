@@ -13,7 +13,7 @@ import { normalizeEgPhone, parsePhones } from './report.js';
 import { isGeniusBackup } from './genius.js';
 import { readAll, showDataAlert, incompleteText } from './paged.js';
 import { reconcile, openingItems } from './stock-reconcile.js';
-import { kvGet, kvSet, enqueue, flush, pending, stuck, retryStuck, discardStuck, describe, onOutboxChange, isOnline, registerServiceWorker, clearLocal } from './offline.js';
+import { kvGet, kvSet, enqueue, flush, pending, stuck, refusedForExport, retryStuck, discardStuck, describe, onOutboxChange, isOnline, registerServiceWorker, clearLocal } from './offline.js';
 import { subscriptionState, monthlyPrice } from './subscription.js';
 import { geniusCorrections, correctionRows } from './genius-sync.js';
 import { setupGeniusLive } from './genius-live-ui.js';
@@ -3193,7 +3193,7 @@ async function renderStuck() {
 }
 $('stuckBox').addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
-  if (t.id === 'stuckSave') { download(`tablix-pharma-refused-${isoDay(new Date())}.json`, new Blob([JSON.stringify(await stuck(), null, 2)], { type: 'application/json' })); return; }
+  if (t.id === 'stuckSave') { download(`tablix-pharma-refused-${isoDay(new Date())}.json`, new Blob([JSON.stringify(refusedForExport(await stuck()), null, 2)], { type: 'application/json' })); return; }
   if (t.id === 'stuckRetryAll' || t.dataset.stretry) { await retryStuck(t.dataset.stretry ? [t.dataset.stretry] : null); await sync(); return; }
   if (t.dataset.stdrop) {
     if (!confirm('تمسحها خالص؟ مش هتترفع ومش هتظهر تاني.')) return;

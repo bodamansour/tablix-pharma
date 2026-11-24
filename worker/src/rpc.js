@@ -155,25 +155,25 @@ export const RPC = {
       ]);
       return null;
     }
+    // Already in this pharmacy: nothing to do, and the code stays free for the person it was made for.
+    if (await one(env, 'SELECT 1 AS x FROM members WHERE pharmacy_id = ? AND user_id = ?', i.pharmacy_id, ctx.user.id)) return i.pharmacy_id;
     const plan = await planFor(env, i.pharmacy_id);
-    if ((await one(env, 'SELECT count(*) AS n FROM members WHERE pharmacy_id = ?', i.pharmacy_id)).n >= plan.max_users) throw new ApiError('plan limit: users');
     // One code, one person, even when two people send it at the same moment: the batch runs as one
     // transaction, the membership is added only while the code is still unused and the plan has room,
-    // and the code is marked used only for the person who got in. The check above is only the quick
-    // answer; these conditions are the ones that count.
+    // and changes() lets only the membership inserted by this batch consume the code.
     const at = nowIso();
     const max = Number.isFinite(+plan.max_users) ? +plan.max_users : 1e9;
-    await env.DB.batch([
+    const [, claim] = await env.DB.batch([
       env.DB.prepare(`INSERT INTO members (pharmacy_id, user_id, role, branch_ids) SELECT ?, ?, ?, ?
         WHERE EXISTS (SELECT 1 FROM invites WHERE code = ? AND used_by IS NULL AND expires_at > ?)
           AND (SELECT count(*) FROM members WHERE pharmacy_id = ?) < ? ON CONFLICT DO NOTHING`)
         .bind(i.pharmacy_id, ctx.user.id, i.role, i.branch_ids || '[]', i.code, at, i.pharmacy_id, max),
-      env.DB.prepare('UPDATE invites SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL AND EXISTS (SELECT 1 FROM members WHERE pharmacy_id = ? AND user_id = ?)')
-        .bind(ctx.user.id, at, i.code, i.pharmacy_id, ctx.user.id),
+      env.DB.prepare('UPDATE invites SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL AND changes() = 1')
+        .bind(ctx.user.id, at, i.code),
     ]);
-    const after = await one(env, 'SELECT used_by FROM invites WHERE code = ?', i.code);
-    if (after?.used_by === ctx.user.id) return i.pharmacy_id;
-    if (after?.used_by) return null; // someone else used this code a moment earlier
+    if (claim.meta?.changes || await one(env, 'SELECT 1 AS x FROM members WHERE pharmacy_id = ? AND user_id = ?', i.pharmacy_id, ctx.user.id)) return i.pharmacy_id;
+    const after = await one(env, 'SELECT used_by FROM invites WHERE code = ? AND expires_at > ?', i.code, nowIso());
+    if (!after || after.used_by) return null;
     throw new ApiError('plan limit: users');
   },
   async list_branch_members(env, ctx, { p_pharmacy }) {
@@ -271,12 +271,10 @@ export const RPC = {
     if (!Number.isFinite(total) || total >= 0 || total < -99999999.99) throw new ApiError('bad return total');
     const reason = String(p_reason ?? '').trim();
     if (!reason || reason.length > 300) throw new ApiError('a return without a receipt needs a reason');
-    if (!isId(p_cashier)) throw new ApiError('the cashier must sign in with their PIN first');
+    if (!isId(p_cashier)) throw new ApiError('the cashier must sign in with their PIN first', '42501', 403);
+    await requireCashierProof(env, ctx, p_pharmacy, p_cashier, p_cashier_token);
     const cashier = await one(env, 'SELECT id, name FROM employees WHERE id = ? AND pharmacy_id = ? AND active = 1', p_cashier, p_pharmacy);
-    if (!cashier) throw new ApiError('the cashier must sign in with their PIN first');
-    // A token for another cashier or another device is refused; none at all (an older app) is taken and
-    // marked in the log of changes.
-    const cashierProof = await cashierCheck(env, ctx, p_pharmacy, cashier.id, p_cashier_token);
+    if (!cashier) throw new ApiError('the cashier must sign in with their PIN first', '42501', 403);
     const approver = await pinEmployee(env, ctx, p_pharmacy, p_pin, 'wrong pin');
     const can = await one(env, 'SELECT can_approve_returns FROM employees WHERE id = ?', approver.id);
     if (!can?.can_approve_returns) throw new ApiError('this employee may not approve returns', '42501', 403);
@@ -292,7 +290,7 @@ export const RPC = {
     const cols = Object.keys(row);
     await runBatch(env, [
       env.DB.prepare(`INSERT INTO return_approvals (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).bind(...cols.map((c) => row[c])),
-      audit(env, ctx, 'return_approvals', 'insert', null, cashierProof === 'ok' ? row : { ...row, cashier_verified: false }),
+      audit(env, ctx, 'return_approvals', 'insert', null, row),
     ]);
     return { approval_id: row.id, approver_name: approver.name };
   },
@@ -468,7 +466,7 @@ async function pinEmployee(env, ctx, pharmacyId, pin, wrongMessage) {
 const CASHIER_TOKEN_MS = 7 * 86400000;
 // 'ok': the employee typed their PIN on this account within 7 days. 'none': no token was sent (an older
 // app, or a PIN checked only on the device). 'stale': a token the server no longer knows (expired, the
-// PIN changed, the employee was stopped). Refused: a token that names another employee, pharmacy or account.
+// PIN changed, the employee was stopped). 'mismatch': a token for another employee, pharmacy or account.
 // `at`: the time the token had to be valid (a receipt's sold_at; now by default).
 export async function cashierCheck(env, ctx, pharmacyId, employeeId, token, at = nowIso()) {
   if (!employeeId) return 'ok';
@@ -476,11 +474,15 @@ export async function cashierCheck(env, ctx, pharmacyId, employeeId, token, at =
   const t = await one(env, `SELECT t.pharmacy_id, t.employee_id, t.user_id, t.created_at, t.expires_at, e.active FROM cashier_tokens t
     LEFT JOIN employees e ON e.id = t.employee_id WHERE t.token_hash = ?`, await sha256(token));
   if (!t) return 'stale';
-  if (t.pharmacy_id !== String(pharmacyId) || t.employee_id !== String(employeeId) || t.user_id !== ctx.user?.id) {
-    throw new ApiError('the cashier must sign in with their PIN on this device', '42501', 403);
-  }
+  if (t.pharmacy_id !== String(pharmacyId) || t.employee_id !== String(employeeId) || t.user_id !== ctx.user?.id) return 'mismatch';
   const when = Number.isFinite(Date.parse(at)) ? new Date(Date.parse(at)).toISOString() : nowIso();
   return t.active && t.expires_at > when && t.created_at <= new Date(Date.parse(when) + SKEW).toISOString() ? 'ok' : 'stale';
+}
+
+export async function requireCashierProof(env, ctx, pharmacyId, employeeId, token) {
+  if (!employeeId || await cashierCheck(env, ctx, pharmacyId, employeeId, token) !== 'ok') {
+    throw new ApiError('the cashier must sign in with their PIN again on this device', '42501', 403);
+  }
 }
 
 // ---------- Moving in a full backup ----------

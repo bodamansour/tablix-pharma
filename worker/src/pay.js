@@ -67,7 +67,7 @@ const same = (a, b) => { if (a.length !== b.length) return false; let d = 0; for
 
 export async function payWebhook(env, req, url, { today } = {}) {
   if (!payReady(env)) throw new ApiError('payments not configured', '501', 501);
-  const b = await req.json().catch(() => null);
+  const b = await req.json().catch((err) => { if (err?.status === 413) throw err; return null; });
   const obj = b?.obj;
   if (!obj || b.type !== 'TRANSACTION') return { ignored: true };
   const given = String(url.searchParams.get('hmac') || '').toLowerCase();
@@ -80,17 +80,28 @@ export async function payWebhook(env, req, url, { today } = {}) {
     if (obj.pending !== true) await env.DB.prepare("UPDATE payments SET status = 'failed', paymob_id = ? WHERE id = ? AND status = 'pending'").bind(String(obj.id ?? ''), p.id).run();
     return { paid: false };
   }
-  // Once only: a second message about the same payment changes nothing.
-  const r = await env.DB.prepare("UPDATE payments SET status = 'paid', paymob_id = ?, paid_at = ? WHERE id = ? AND status IN ('pending', 'failed')").bind(String(obj.id ?? ''), nowIso(), p.id).run();
-  if (!r.meta?.changes) return { paid: true, again: true };
-  // The months start after what is already paid, or after the free trial still running, else today. A
-  // suspended pharmacy stays suspended (the admin decides); the months are still added.
-  const sub = await one(env, 'SELECT status, trial_ends, paid_until FROM subscriptions WHERE pharmacy_id = ?', p.pharmacy_id);
-  const from = sub?.status === 'trial' ? sub.trial_ends : sub?.paid_until;
-  const until = extendPaid(from || null, p.months, today);
-  await env.DB.prepare(`INSERT INTO subscriptions (pharmacy_id, status, paid_until, note, updated_at) VALUES (?, 'active', ?, ?, ?)
-    ON CONFLICT(pharmacy_id) DO UPDATE SET status = CASE WHEN subscriptions.status = 'suspended' THEN 'suspended' ELSE 'active' END,
-      paid_until = excluded.paid_until, updated_at = excluded.updated_at`)
-    .bind(p.pharmacy_id, until, 'Paymob', nowIso()).run();
-  return { paid: true, until };
+  if (p.status === 'paid') return { paid: true, again: true };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const sub = await one(env, 'SELECT status, trial_ends, paid_until FROM subscriptions WHERE pharmacy_id = ?', p.pharmacy_id);
+    const from = (sub?.status === 'trial' ? sub.trial_ends : sub?.paid_until) ?? null;
+    const until = extendPaid(from, p.months, today), at = nowIso();
+    // Credit only the subscription state we calculated from. The second statement marks paid only
+    // when the first changed a row, and the batch rolls both back on error.
+    const [, settled] = await env.DB.batch([
+      env.DB.prepare(`INSERT INTO subscriptions (pharmacy_id, status, paid_until, note, updated_at)
+        SELECT ?, 'active', ?, 'Paymob', ?
+        WHERE EXISTS (SELECT 1 FROM payments WHERE id = ? AND status IN ('pending', 'failed'))
+          AND (SELECT status FROM subscriptions WHERE pharmacy_id = ?) IS ?
+          AND (SELECT CASE WHEN status = 'trial' THEN trial_ends ELSE paid_until END FROM subscriptions WHERE pharmacy_id = ?) IS ?
+        ON CONFLICT(pharmacy_id) DO UPDATE SET status = CASE WHEN subscriptions.status = 'suspended' THEN 'suspended' ELSE 'active' END,
+          paid_until = excluded.paid_until, updated_at = excluded.updated_at`)
+        .bind(p.pharmacy_id, until, at, p.id, p.pharmacy_id, sub?.status ?? null, p.pharmacy_id, from),
+      env.DB.prepare("UPDATE payments SET status = 'paid', paymob_id = ?, paid_at = ? WHERE id = ? AND status IN ('pending', 'failed') AND changes() = 1")
+        .bind(String(obj.id ?? ''), at, p.id),
+    ]);
+    if (settled.meta?.changes) return { paid: true, until };
+    const current = await one(env, 'SELECT status FROM payments WHERE id = ?', p.id);
+    if (current?.status === 'paid') return { paid: true, again: true };
+  }
+  throw new ApiError('payment settlement busy', '503', 503);
 }

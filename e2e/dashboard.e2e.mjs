@@ -964,6 +964,35 @@ test('printing: the receipt, the sales report, labels and the export page each p
   assert.ok(prints.every((p) => p.how === 'frame'), 'all four through the hidden frame (no popup window)');
 });
 
+test('cashier loads taught barcodes past the server page limit', async () => {
+  const barcode = '6299900010001';
+  const previous = await page.evaluate(async (barcode) => {
+    const { kvGet } = await import('./src/offline.js');
+    const before = { rows: window.__DB.pos_barcodes, cache: await kvGet('pos-codes:ph1', []) };
+    window.__DB.pos_barcodes = Array.from({ length: 1001 }, (_, n) => ({
+      id: String(n).padStart(4, '0'), pharmacy_id: 'ph1', barcode: n === 1000 ? barcode : `6299800${String(n).padStart(6, '0')}`, code: '101',
+    }));
+    localStorage.setItem('__stubdb', JSON.stringify(window.__DB));
+    return before;
+  }, barcode);
+  try {
+    await page.goto(`${base}cashier.html`);
+    await page.waitForSelector('#pos:not([hidden])');
+    assert.ok(await until(async () => /صنف/.test(await text('#posMsg'))), 'items loaded');
+    await page.fill('#q', barcode);
+    await page.press('#q', 'Enter');
+    assert.match(await text('#cart'), /Panadol/);
+    assert.equal(await page.locator('#unknownDlg').isHidden(), true);
+  } finally {
+    await page.evaluate(async ({ rows, cache }) => {
+      const { kvSet } = await import('./src/offline.js');
+      window.__DB.pos_barcodes = rows;
+      localStorage.setItem('__stubdb', JSON.stringify(window.__DB));
+      await kvSet('pos-codes:ph1', cache);
+    }, previous);
+  }
+});
+
 test('no script errors', () => {
   assert.deepEqual(errors, []);
 });

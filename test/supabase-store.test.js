@@ -21,6 +21,7 @@ test('database errors become clear Arabic messages', async () => {
   const c = fakeClient(() => ({ data: null, error: { message: 'wrong pin' } }));
   await assert.rejects(createSupabaseStore(c, 'p1').clock('0000'), /الكود غلط/);
   assert.match(arabicError({ message: 'PIN already used' }).message, /مستخدم/);
+  assert.match(arabicError({ message: 'the cashier must sign in with their PIN again on this device' }).message, /تاني على الجهاز ده/);
   assert.match(arabicError({ message: 'TypeError: Failed to fetch' }).message, /مفيش اتصال/);
   assert.match(arabicError({ message: 'weird internal thing' }).message, /حصلت مشكلة/);
 });

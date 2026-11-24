@@ -162,6 +162,7 @@ class _CashierScreenState extends State<CashierScreen> {
     try {
       sentNow = await s.sell(row);
     } on ApiError catch (e) {
+      if (!mounted) return;
       setState(() => busy = false);
       return fail(e.message.contains('stock') ? 'الرصيد مش مكفي في الفرع ده: ${e.arabic}' : 'السيرفر رفض الفاتورة: ${e.arabic}');
     }

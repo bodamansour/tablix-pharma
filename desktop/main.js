@@ -17,8 +17,9 @@ const LEGACY_DATA = join(app.getPath('appData'), 'Saydaliti');
 if (existsSync(LEGACY_DATA)) app.setPath('userData', LEGACY_DATA);
 
 const APP_DIR = join(__dirname, 'app');
-const LOCAL_HOME = 'app://saydaliti/index.html';
-const START = 'app://saydaliti/start.html';
+const APP_ORIGIN = 'app://saydaliti';
+const START = `${APP_ORIGIN}/start.html`;
+const START_OFFLINE = `${START}?offline=1`;
 const SITE = (process.env.SAYDALITI_SITE || 'https://tablix.tablixpharma.workers.dev').replace(/\/$/, '');
 const SITE_ORIGIN = new URL(SITE).origin;
 
@@ -27,7 +28,7 @@ const modeFile = () => join(app.getPath('userData'), 'mode.json');
 async function readMode() { try { return JSON.parse(await fs.readFile(modeFile(), 'utf8')).mode || null; } catch { return null; } }
 async function writeMode(mode) { await fs.writeFile(modeFile(), JSON.stringify({ mode }), 'utf8'); }
 let MODE = null;
-const home = (page = 'index.html') => (MODE === 'online' ? `${SITE}/${page}` : `app://saydaliti/${page}`);
+const home = (page = 'index.html') => `${MODE === 'online' ? SITE : APP_ORIGIN}/${page}`;
 const ours = (url) => url.startsWith('app://') || (MODE === 'online' && url.startsWith(SITE_ORIGIN + '/'));
 
 // A private address for the app's files, treated like a secure website (storage, crypto, fetch).
@@ -96,7 +97,7 @@ function createWindow() {
   win.on('closed', () => { win = null; });
   // Online with no connection the first time: the start page explains, instead of a blank window.
   win.webContents.on('did-fail-load', (_e, code, _d, url, isMain) => {
-    if (isMain && MODE === 'online' && url.startsWith(SITE_ORIGIN) && code !== -3) win.loadURL(`${START}?offline=1`);
+    if (isMain && MODE === 'online' && url.startsWith(SITE_ORIGIN) && code !== -3) win.loadURL(START_OFFLINE);
   });
   // WhatsApp and other links open in the normal browser; the app's own pages stay inside.
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -161,7 +162,7 @@ ipcMain.handle('backup:latest', async (e) => {
   return { name, json: await fs.readFile(join(dir, name), 'utf8') };
 });
 ipcMain.handle('mode:set', async (e, mode) => {
-  if (!['online', 'local'].includes(mode) || !e.senderFrame?.url?.startsWith('app://')) return null; // only the start page
+  if (!trusted(e) || ![START, START_OFFLINE].includes(e.senderFrame.url) || !['online', 'local'].includes(mode)) return null;
   MODE = mode;
   await writeMode(mode);
   win?.loadURL(home());
@@ -276,8 +277,14 @@ function showWindow() {
 function startWithWindows(on) {
   if (process.platform === 'win32' && app.isPackaged) app.setLoginItemSettings({ openAtLogin: on, args: ['--background'] });
 }
-// Only the program's own pages (and the pharmacy's website) may use the sync.
-const trusted = (e) => { const u = e.senderFrame?.url || ''; return u.startsWith('app://') || u.startsWith(SITE_ORIGIN + '/'); };
+// Validate the frame before any async work. Print views and nested frames have no IPC access.
+const trusted = (e) => {
+  if (!win || win.isDestroyed() || e.sender !== win.webContents) return false;
+  const frame = e.senderFrame;
+  if (!frame || frame.detached || frame !== e.sender.mainFrame) return false;
+  const { origin, url } = frame;
+  return (origin === APP_ORIGIN || origin === SITE_ORIGIN) && url.startsWith(origin + '/');
+};
 const text = (v, max = 200) => (typeof v === 'string' ? v.trim().slice(0, max) : '');
 ipcMain.handle('mode:choose', (e) => { if (trusted(e)) win?.loadURL(START); return null; });
 ipcMain.handle('genius:status', (e) => (trusted(e) ? syncState() : null));

@@ -23,7 +23,7 @@ export async function readAll(make, { table, max }) {
 
 // A message that stays on screen until the page is opened again.
 const TABLE_AR = { pos_sales: 'فواتير الكاشير', purchases: 'فواتير الشراء', stock_moves: 'حركات المخزون', catalog_items: 'الأصناف',
-  customers: 'العملاء', customer_payments: 'دفعات العملاء', expenses: 'المصروفات', supplier_payments: 'دفعات الموردين' };
+  customers: 'العملاء', customer_payments: 'دفعات العملاء', expenses: 'المصروفات', supplier_payments: 'دفعات الموردين', pos_barcodes: 'الباركودات المسجّلة' };
 export function incompleteText(err) {
   const what = TABLE_AR[err.table] || err.table;
   return `البيانات مش كاملة: ${what} أكتر من ${err.max.toLocaleString('ar-EG')} سجل، وده أكتر من اللي الشاشة دي تقدر تحمّله. الرصيد والأرقام المحسوبة منها مش هتبقى صح، فمتعتمدش عليها وكلّم الدعم.`;

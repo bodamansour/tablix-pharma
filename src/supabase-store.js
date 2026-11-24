@@ -14,6 +14,7 @@ const MESSAGES = {
   'needs a manager approval': 'المرتجع من غير فاتورة محتاج موافقة مدير.',
   'may not approve returns': 'الموظف ده مش مسموح له يوافق على المرتجع. صاحب الصيدلية يقدر يسمح له من «الحضور والانصراف».',
   'approver must be another employee': 'الموافقة لازم تبقى من موظف تاني غير الكاشير.',
+  'cashier must sign in with their PIN again': 'الكاشير لازم يدخل برقمه السري تاني على الجهاز ده.',
   'cashier must sign in with their PIN': 'الكاشير لازم يدخل برقمه السري الأول.',
   'approval not for this': 'الموافقة دي مش لنفس المرتجع. اطلب موافقة جديدة.',
   'already approved differently': 'المرتجع ده اتوافق عليه قبل كده ببيانات مختلفة.',

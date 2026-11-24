@@ -85,6 +85,13 @@ const isRetryLater = (e) => /schema cache|does not exist|PGRST20[45]|42P01|timeo
 // Only an uploaded data file is not kept (it is large, and can simply be uploaded again).
 const STUCK = 'outbox-stuck';
 export const stuck = () => kvGet(STUCK, []);
+export function refusedForExport(entries) {
+  return entries.map((entry) => {
+    if (!entry.payload?.row || !Object.hasOwn(entry.payload.row, 'cashier_token')) return entry;
+    const { cashier_token, ...row } = entry.payload.row;
+    return { ...entry, payload: { ...entry.payload, row } };
+  });
+}
 export async function retryStuck(ids = null) {
   let moved = [];
   await kvUpdate(STUCK, (s) => { moved = s.filter((e) => !ids || ids.includes(e.id)); return s.filter((e) => !moved.includes(e)); }, []);

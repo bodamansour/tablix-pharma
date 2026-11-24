@@ -67,7 +67,9 @@ test('voiding a receipt: everything left, by the owner or with a manager approva
   const manager = (await owner.rpc('add_employee', { p_pharmacy: P, p_name: 'مدير', p_pin: '846102' })).data;
   assert.match((await device.insert('pos_sales', { ...all, employee_id: cashier })).error.message, /manager approval/);
   await owner.call('/api/db', { op: 'update', table: 'employees', patch: { can_approve_returns: true }, filters: [['id', 'eq', manager]] });
-  const ok = await device.rpc('approve_no_receipt_return', { p_pharmacy: P, p_branch: B, p_return_id: all.id, p_total: -120, p_reason: 'إلغاء: غلطة في الفاتورة', p_cashier: cashier, p_pin: '846102' });
+  // The cashier's PIN sign-in on this device (cashier_pin): the approval needs it.
+  const cashierToken = (await device.rpc('cashier_pin', { p_pharmacy: P, p_pin: '731904' })).data[0].cashier_token;
+  const ok = await device.rpc('approve_no_receipt_return', { p_pharmacy: P, p_branch: B, p_return_id: all.id, p_total: -120, p_reason: 'إلغاء: غلطة في الفاتورة', p_cashier: cashier, p_cashier_token: cashierToken, p_pin: '846102' });
   assert.equal(ok.error, null);
   assert.equal((await device.insert('pos_sales', { ...all, employee_id: cashier, approval_id: ok.data.approval_id })).error, null);
   // Nothing is left to return after a void.

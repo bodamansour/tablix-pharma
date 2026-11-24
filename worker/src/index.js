@@ -7,7 +7,7 @@
 //   POST /rest/v1/rpc/upload_snapshot (the pharmacy connector, same address shape as before)
 import { ApiError, select, insert, update, remove } from './db.js';
 import { signUp, signIn, signInWithGoogle, linkGoogle, signOut, userOf, changePassword, sessionCookie, clearCookie, mfaSetup, mfaEnable, mfaDisable, forgotPassword, resetPassword, emailReady, mfaOf } from './auth.js';
-import { RPC, rpcNamed, checkPosSale, cashierCheck, reportFeed, remindersFeed, markRemindersSent, storeSnapshotText, branchOf } from './rpc.js';
+import { RPC, rpcNamed, checkPosSale, requireCashierProof, reportFeed, remindersFeed, markRemindersSent, storeSnapshotText, branchOf } from './rpc.js';
 import { requireRole } from './db.js';
 import { aiChat, aiInvoice } from './ai.js';
 import { payStart, payWebhook, payReady } from './pay.js';
@@ -77,7 +77,10 @@ export async function readBody(req, max, tooLarge = 'request too large') {
 const readText = async (req, max, tooLarge) => new TextDecoder().decode(await readBody(req, max, tooLarge));
 async function body(req, max = 25 * 1024 * 1024) {
   const text = await readText(req, max);
-  try { return JSON.parse(text); } catch { throw new ApiError('bad json', 'PGRST102'); }
+  let value;
+  try { value = JSON.parse(text); } catch { throw new ApiError('bad json', 'PGRST102'); }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new ApiError('expected a JSON object', 'PGRST102');
+  return value;
 }
 // For handlers that call req.json() themselves (ai.js, pay.js): the same body, read with a limit.
 const limitedJson = (req, max) => ({ json: () => body(req, max) });
@@ -175,8 +178,7 @@ async function api(req, env, url, ctx) {
       }
       await insert(ctx, env, q, { beforeInsert: async (table, row) => {
         if (table === 'pos_sales') return checkPosSale(ctx, env, row, tokens.get(String(row.id)) ?? null);
-        // A shift opened for a cashier: a token for someone else is refused (none at all is taken).
-        if (table === 'pos_shifts') { await cashierCheck(env, ctx, row.pharmacy_id, row.employee_id, tokens.get(String(row.id)) ?? null, row.opened_at); return; }
+        if (table === 'pos_shifts' && row.employee_id) await requireCashierProof(env, ctx, row.pharmacy_id, row.employee_id, tokens.get(String(row.id)));
         // The cashier device records only money taken out of the drawer; other expenses are the owner's.
         if (table === 'expenses' && !['owner', 'accountant'].includes(ctx.roles.get(row.pharmacy_id)) && row.kind !== 'withdrawal') throw new ApiError('not allowed', '42501', 403);
         // Treasury moves: only a correction may be negative; a count, a trip to the bank and back are amounts.

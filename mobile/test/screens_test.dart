@@ -1,6 +1,7 @@
 // The screens, drawn for real on a phone-sized surface with the parity scenario's pharmacy: every part of
 // the app opens, in light and dark and on a narrow phone, with nothing overflowing and no error thrown.
 // (A layout that overflows, or a widget that throws while building, fails the test.)
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -387,6 +388,45 @@ void main() {
     expect([sale['kind'], sale['payment'], sale['created_by'], (sale['lines'] as List).single['qty']], ['sale', 'cash', 'u1', 2]);
     expect(sale['total'], closeTo(((item.price * 100).round() * 2) / 100, 0.001));
   });
+
+  for (final operation in ['sale', 'receipt lookup', 'return']) {
+    testWidgets('a rejected $operation after leaving the screen does not update disposed state', (t) async {
+      SharedPreferences.setMockInitialValues({});
+      final reply = Completer<http.Response>();
+      var waiting = false;
+      final s = loaded(api: Api(client: MockClient((req) async {
+        final body = jsonDecode(req.body) as Map;
+        if (operation == 'receipt lookup' || body['op'] == 'upsert') {
+          waiting = true;
+          return reply.future;
+        }
+        return http.Response('{"data":[]}', 200);
+      })));
+      await size(t, 390, 800);
+      await t.pumpWidget(app(s, operation == 'sale' ? const CashierScreen() : const ReturnScreen(), Brightness.light));
+      if (operation == 'sale') {
+        final item = s.view!.data.items.firstWhere((i) => i.price > 0);
+        await t.enterText(find.byType(TextField).first, item.code);
+        await t.testTextInput.receiveAction(TextInputAction.search);
+        await t.pumpAndSettle();
+        await tapText(t, 'سجّل الفاتورة');
+      } else {
+        final sales = s.repo.raw!.sales;
+        final receipt = operation == 'receipt lookup'
+            ? 'missing-receipt'
+            : sales.firstWhere((r) =>
+                r['kind'] == 'sale' && r['payment'] == 'cash' && (r['credit'] ?? 0) == 0 && returnableLines(r, sales).isNotEmpty)['number'].toString();
+        await t.enterText(find.byType(TextField), receipt);
+        await tapText(t, 'دوّر');
+        if (operation == 'return') await tapText(t, 'سجّل المرتجع');
+      }
+      expect(waiting, isTrue, reason: 'the server request is still open');
+      await t.pumpWidget(const SizedBox.shrink());
+      reply.complete(http.Response('{"error":{"message":"not allowed"}}', 403));
+      await t.pumpAndSettle();
+      expect(t.takeException(), isNull);
+    });
+  }
 
   for (final b in [Brightness.light, Brightness.dark]) {
     testWidgets('the settings open (${b.name}, narrow phone)', (t) async {

@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { migrated, fakeR2 } from './helpers/d1-fake.js';
-import { RPC, checkPosSale, cashierCheck, reportFeed } from '../worker/src/rpc.js';
+import { RPC, checkPosSale, cashierCheck, requireCashierProof, reportFeed } from '../worker/src/rpc.js';
 
 const env = () => ({ DB: migrated(), FILES: fakeR2(), PIN_PEPPER: 'test-pepper-0123456789abcdef' });
 const ctxOf = (id, roles = {}, scopes = {}) => ({ user: { id }, roles: new Map(Object.entries(roles)), branchScopes: new Map(Object.entries(scopes)) });
@@ -81,14 +81,13 @@ test('cashier_pin gives a token for that employee on that account; a receipt wit
   assert.deepEqual(await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '0000' }), [], 'a wrong PIN gives nothing');
 });
 
-test('a receipt naming a cashier with no token, or an old one, is taken and marked; one with another cashier\'s token is refused', async () => {
+test('a receipt naming a cashier is taken and flagged whenever its proof is invalid', async () => {
   const { e, p, b, emp, other, device } = await withCashier();
   const [row] = await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '4821' });
   assert.ok((await checkPosSale(device, e, sale(p, b, other), null)).flags.includes('cashier_not_verified'), 'no token: marked');
-  await assert.rejects(checkPosSale(device, e, sale(p, b, other), row.cashier_token), /sign in with their PIN on this device/, 'another cashier\'s token: refused');
-  // The same token used by another account (another device): refused.
+  assert.ok((await checkPosSale(device, e, sale(p, b, other), row.cashier_token)).flags.includes('cashier_not_verified'), 'another cashier’s token: marked');
   const device2 = ctxOf('u-device-2', { [p]: 'device' }, { [p]: [b] });
-  await assert.rejects(checkPosSale(device2, e, sale(p, b, emp), row.cashier_token), /on this device/);
+  assert.ok((await checkPosSale(device2, e, sale(p, b, emp), row.cashier_token)).flags.includes('cashier_not_verified'), 'another account’s token: marked');
   // A receipt dated after the 7 days: marked, not refused (it may have waited offline).
   const late = sale(p, b, emp, { sold_at: new Date(Date.now() + 8 * 86400000).toISOString() });
   assert.equal(await cashierCheck(e, device, p, emp, row.cashier_token, late.sold_at), 'stale');
@@ -98,21 +97,43 @@ test('a receipt naming a cashier with no token, or an old one, is taken and mark
   assert.equal(await cashierCheck(e, device, p, null, null), 'ok', 'a receipt with no cashier named needs nothing');
 });
 
-test('a return without its receipt: the approval refuses another cashier\'s token and logs one sent without a token', async () => {
-  const { e, p, b, owner, emp, other, device } = await withCashier();
+test('opening an employee shift requires current proof for the employee, account and pharmacy', async () => {
+  const { e, p, b, emp, other, device } = await withCashier();
+  const [row] = await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '4821' });
+  const token = row.cashier_token;
+  const reject = (...args) => assert.rejects(requireCashierProof(e, ...args), (err) => err.status === 403);
+  await requireCashierProof(e, device, p, emp, token);
+  await reject(device, p, emp, undefined);
+  await reject(device, p, other, token);
+  await reject(device, crypto.randomUUID(), emp, token);
+  await reject(ctxOf('u-other', { [p]: 'device' }, { [p]: [b] }), p, emp, token);
+  await e.DB.prepare('UPDATE cashier_tokens SET expires_at = ? WHERE employee_id = ?').bind(new Date(Date.now() - 60_000).toISOString(), emp).run();
+  await reject(device, p, emp, token);
+});
+
+test('a return without its receipt: the approval needs the cashier\'s own PIN sign-in on this device', async () => {
+  const { e, p, b, emp, other, device } = await withCashier();
   await e.DB.prepare('UPDATE employees SET can_approve_returns = 1 WHERE id = ?').bind(other).run();
   const [row] = await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '4821' });
-  const ask = (o = {}) => RPC.approve_no_receipt_return(e, device, { p_pharmacy: p, p_branch: b, p_return_id: crypto.randomUUID(), p_total: -20, p_reason: 'العميل نسي الفاتورة', p_cashier: emp, p_pin: '7390', ...o });
+  const ask = (o = {}, actor = device) => RPC.approve_no_receipt_return(e, actor, { p_pharmacy: p, p_branch: b, p_return_id: crypto.randomUUID(), p_total: -20, p_reason: 'العميل نسي الفاتورة', p_cashier: emp, p_pin: '7390', ...o });
+  const refused = (args, actor) => assert.rejects(ask(args, actor), (err) => err.status === 403 && /sign in with their PIN/.test(err.message));
   assert.ok((await ask({ p_cashier_token: row.cashier_token })).approval_id);
   // The manager's own token can't stand for the cashier.
   const [mgr] = await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '7390' });
-  await assert.rejects(ask({ p_cashier_token: mgr.cashier_token }), /on this device/);
-  // No token (an older app): approved, and the log of changes says the cashier was not verified.
-  assert.ok((await ask()).approval_id);
-  const logged = (await e.DB.prepare("SELECT new_row FROM audit_log WHERE table_name = 'return_approvals' ORDER BY id").all()).results.map((r) => JSON.parse(r.new_row));
-  assert.equal(logged.at(-1).cashier_verified, false);
-  assert.equal(logged[0].cashier_verified, undefined);
-  void owner;
+  await refused({ p_cashier_token: mgr.cashier_token });
+  await refused({ p_cashier_token: row.cashier_token }, ctxOf('u-other', { [p]: 'device' }, { [p]: [b] }));
+  const elsewhere = await pharmacy(e);
+  const otherPharmacyEmployee = await RPC.add_employee(e, elsewhere.owner, { p_pharmacy: elsewhere.p, p_name: 'موظف', p_pin: '5219' });
+  device.roles.set(elsewhere.p, 'device');
+  device.branchScopes.set(elsewhere.p, [elsewhere.b]);
+  await refused({ p_pharmacy: elsewhere.p, p_branch: elsewhere.b, p_cashier: otherPharmacyEmployee, p_cashier_token: row.cashier_token });
+  // No token (an older app) or one that no longer counts: refused, the cashier types the PIN again.
+  await refused();
+  await e.DB.prepare('UPDATE cashier_tokens SET expires_at = ? WHERE employee_id = ?').bind(new Date(Date.now() - 60_000).toISOString(), emp).run();
+  await refused({ p_cashier_token: row.cashier_token });
+  const [fresh] = await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '4821' });
+  await RPC.set_employee_pin(e, { user: { id: 'u-owner' }, roles: new Map([[p, 'owner']]) }, { p_employee: emp, p_pin: '6161' });
+  await refused({ p_cashier_token: fresh.cashier_token });
 });
 
 test('the morning report skips a damaged upload and uses the one before it', async () => {
@@ -143,4 +164,28 @@ test('a request body is limited by the bytes that arrive, not by the Content-Len
   await assert.rejects(readBody(lying, 2048), (e) => e.status === 413);
   // Within the limit: the bytes, whole.
   assert.equal((await readBody(new Request('https://x', { method: 'POST', body: stream(2), duplex: 'half' }), 2048)).byteLength, 2048);
+});
+
+test('someone already in the pharmacy who sends a fresh code does not use it up', async () => {
+  const e = env();
+  const { p, owner } = await pharmacy(e);
+  assert.equal(await RPC.join_pharmacy(e, ctxOf('u-old'), { p_code: await RPC.create_invite(e, owner, { p_pharmacy: p, p_role: 'pharmacist' }) }), p);
+  const code = await RPC.create_invite(e, owner, { p_pharmacy: p, p_role: 'stock' });
+  assert.equal(await RPC.join_pharmacy(e, ctxOf('u-old'), { p_code: code }), p, 'still answered with the pharmacy');
+  assert.equal((await e.DB.prepare('SELECT used_by FROM invites WHERE code = ?').bind(code.replace(/-/g, '')).first()).used_by, null, 'the code is still free');
+  assert.equal((await e.DB.prepare("SELECT role FROM members WHERE pharmacy_id = ? AND user_id = 'u-old'").bind(p).first()).role, 'pharmacist', 'the role is unchanged');
+  assert.equal(await RPC.join_pharmacy(e, ctxOf('u-new'), { p_code: code }), p, 'the person it was made for gets in');
+});
+
+test('two invitations redeemed together by the same user consume only one code', async () => {
+  const e = env();
+  const { p, owner } = await pharmacy(e);
+  const args = { p_pharmacy: p, p_role: 'pharmacist' };
+  const codes = [await RPC.create_invite(e, owner, args), await RPC.create_invite(e, owner, args)];
+  serializeBatches(e.DB);
+  const member = ctxOf('u-new');
+  assert.deepEqual(await Promise.all(codes.map((p_code) => RPC.join_pharmacy(e, member, { p_code }))), [p, p]);
+  const invite = await e.DB.prepare('SELECT code FROM invites WHERE pharmacy_id = ? AND used_by IS NULL').bind(p).all();
+  assert.equal(invite.results.length, 1);
+  assert.equal(await RPC.join_pharmacy(e, ctxOf('u-other'), { p_code: invite.results[0].code }), p);
 });

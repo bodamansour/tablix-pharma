@@ -145,6 +145,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
         returns = [...returns.where((x) => !more.any((y) => y['id'] == x['id'])), ...more];
       }
     } on ApiError catch (e) {
+      if (!mounted) return;
       if (!e.offline) {
         setState(() {
           busy = false;
@@ -178,6 +179,7 @@ class _ReturnScreenState extends State<ReturnScreen> {
     try {
       sentNow = await s.sell(row);
     } on ApiError catch (e) {
+      if (!mounted) return;
       return setState(() {
         busy = false;
         msg = 'السيرفر رفض المرتجع: ${e.arabic}';

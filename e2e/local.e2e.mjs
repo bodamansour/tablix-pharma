@@ -180,9 +180,12 @@ test('backup to a file and back', async () => {
   const file = join(await mkdtemp(join(tmpdir(), 'sd-')), 'old.json');
   // A broken copy (a row with no id, or a cut-off file) is refused and nothing changes.
   const broken = join(await mkdtemp(join(tmpdir(), 'sd-')), 'broken.json');
-  await writeFile(broken, JSON.stringify({ ...dump, tables: { ...dump.tables, purchases: [{ lines: [] }] } }));
+  await writeFile(broken, JSON.stringify(dump));
   await page.setInputFiles('#restoreFile', broken);
-  assert.ok(await until(async () => /فيها مشكلة/.test(await text('#backupMsg'))));
+  assert.ok(await until(async () => /بصمة النسخة الاحتياطية غير مطابقة/.test(await text('#backupMsg'))));
+  await writeFile(broken, JSON.stringify({ ...dump, fingerprint: undefined, tables: { ...dump.tables, purchases: [{ lines: [] }] } }));
+  await page.setInputFiles('#restoreFile', broken);
+  assert.ok(await until(async () => /صف ناقص/.test(await text('#backupMsg'))));
   await writeFile(broken, JSON.stringify(dump).slice(0, 500));
   await page.setInputFiles('#restoreFile', broken);
   assert.ok(await until(async () => /ناقص أو بايظ/.test(await text('#backupMsg'))));
@@ -194,6 +197,7 @@ test('backup to a file and back', async () => {
   assert.ok(await until(async () => /15/.test(await text('#itemsBody tr'))), 'the data on the computer is unchanged');
   await openTools(page);
   await page.click('#localBox summary');
+  dump.fingerprint = await page.evaluate(async (tables) => (await import('./src/local-db.js')).backupFingerprint(tables), dump.tables);
   await writeFile(file, JSON.stringify(dump));
   await page.setInputFiles('#restoreFile', file);
   await page.waitForSelector('#app:not([hidden])');
@@ -316,6 +320,49 @@ test('cancelling a whole receipt: a written reason, everything back on the shelf
   await page.click('#modeReturn');
   await page.click('#dayList [data-retid]');
   assert.ok(await until(async () => /اترجع قبل كده/.test(await text('#retInfo'))), 'nothing left to return');
+});
+
+test('local cashier attribution requires the matching PIN proof for shifts and approvals and flags receipts', async () => {
+  await page.goto(base);
+  const result = await page.evaluate(async () => {
+    const { createLocalClient } = await import('./src/local-db.js');
+    const client = await createLocalClient(`cashier-test-${crypto.randomUUID()}`);
+    try {
+      const { data: pharmacy } = await client.rpc('create_pharmacy', { p_name: 'Local example' });
+      const cashierPin = String(1000 + Math.floor(Math.random() * 8000));
+      const managerPin = String(Number(cashierPin) + 1);
+      const addEmployee = async (name, pin) => (await client.rpc('add_employee', { p_pharmacy: pharmacy, p_name: name, p_pin: pin })).data;
+      const employee = await addEmployee('Cashier', cashierPin);
+      const manager = await addEmployee('Manager', managerPin);
+      await client.from('employees').update({ can_approve_returns: true }).eq('id', manager);
+      const signIn = async (pin) => (await client.rpc('cashier_pin', { p_pharmacy: pharmacy, p_pin: pin })).data[0].cashier_token;
+      const proof = await signIn(cashierPin);
+      const managerProof = await signIn(managerPin);
+      const openShift = (cashier_token) => client.from('pos_shifts').insert({ pharmacy_id: pharmacy, employee_id: employee, opened_at: new Date().toISOString(), cashier_token });
+      const approve = (p_cashier_token) => client.rpc('approve_no_receipt_return', {
+        p_pharmacy: pharmacy, p_return_id: crypto.randomUUID(), p_total: -20, p_reason: 'Fixture return', p_cashier: employee, p_cashier_token, p_pin: managerPin,
+      });
+      const saveReceipt = (number, cashier_token) => client.from('pos_sales').insert({
+        pharmacy_id: pharmacy, employee_id: employee, number, kind: 'sale', sold_at: new Date().toISOString(), cashier_token,
+        lines: [{ code: 'A1', price: 20, qty: 1 }], total: 20, discount: 0, paid: 20, payment: 'cash',
+      });
+      const shiftStatuses = [(await openShift()).status, (await openShift(managerProof)).status];
+      const approvalStatuses = [(await approve()).status, (await approve(managerProof)).status];
+      const validShift = (await openShift(proof)).error === null;
+      const validApproval = !!(await approve(proof)).data?.approval_id;
+      const savedReceipts = [(await saveReceipt('verified', proof)).error, (await saveReceipt('review', null)).error].every((e) => e === null);
+      const { tables } = await client.exportAll();
+      return {
+        shiftStatuses, approvalStatuses, validShift, validApproval, savedReceipts,
+        flagged: tables.audit_log.filter((row) => row.op === 'flag').map(({ new_row }) => [new_row.number, new_row.flags]),
+        containsProof: JSON.stringify(tables).includes(proof),
+      };
+    } finally { client.close(); }
+  });
+  assert.deepEqual(result, {
+    shiftStatuses: [403, 403], approvalStatuses: [403, 403], validShift: true, validApproval: true, savedReceipts: true,
+    flagged: [['review', ['cashier_not_verified']]], containsProof: false,
+  });
 });
 
 test('no script errors', () => {
