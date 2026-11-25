@@ -1,0 +1,41 @@
+# Copy to .dev.vars locally, then set local-only values. Never commit .dev.vars.
+# Empty optional credentials disable their integration. Never reuse production keys.
+# DB, FILES and ASSETS are bindings configured in wrangler.toml, not secret strings.
+PIN_PEPPER=
+PIN_PEPPER_OLD=
+SIGNUP_PER_HOUR=
+PBKDF2_ITER=
+BACKUP_KEY=
+BACKUP_KEYS_OLD=
+TOTP_KEY=
+TOTP_KEY_OLD=
+AUDIT_SEAL_KEY=
+AUDIT_SEAL_KEY_OLD=
+# Leave empty to retain the current default budget (150); no budget increase here.
+SEAL_BUDGET=
+VERIFY_MAX_ROWS=
+EMAIL_OUTBOX=
+RESEND_API_KEY=
+EMAIL_FROM=
+GOOGLE_CLIENT_ID=
+# No GOOGLE_CLIENT_SECRET: this Worker verifies Google ID tokens using public keys.
+ANTHROPIC_API_KEY=
+AI_MODEL=
+PAYMOB_SECRET_KEY=
+PAYMOB_PUBLIC_KEY=
+PAYMOB_INTEGRATION_IDS=
+PAYMOB_HMAC=
+WHATSAPP_TOKEN=
+WHATSAPP_PHONE_ID=
+WHATSAPP_TEMPLATE=
+WHATSAPP_DOSE_TEMPLATE=
+WHATSAPP_REFILL_TEMPLATE=
+WHATSAPP_LANG=
+SITE_URL=
+DEPLOY_ENV=
+MORNING_CRON=
+BACKUP_CRON=
+# Shared morning/reminder job inputs. Worker supplies internal values in jobEnv().
+SUPABASE_URL=
+SUPABASE_PUBLISHABLE_KEY=
+REPORT_SECRET=
