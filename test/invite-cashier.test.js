@@ -104,6 +104,8 @@ test('opening an employee shift requires current proof for the employee, account
   const reject = (...args) => assert.rejects(requireCashierProof(e, ...args), (err) => err.status === 403);
   await requireCashierProof(e, device, p, emp, token);
   await reject(device, p, emp, undefined);
+  await reject(device, p, emp, 'malformed');
+  await reject(device, p, emp, '0'.repeat(64));
   await reject(device, p, other, token);
   await reject(device, crypto.randomUUID(), emp, token);
   await reject(ctxOf('u-other', { [p]: 'device' }, { [p]: [b] }), p, emp, token);
@@ -129,6 +131,8 @@ test('a return without its receipt: the approval needs the cashier\'s own PIN si
   await refused({ p_pharmacy: elsewhere.p, p_branch: elsewhere.b, p_cashier: otherPharmacyEmployee, p_cashier_token: row.cashier_token });
   // No token (an older app) or one that no longer counts: refused, the cashier types the PIN again.
   await refused();
+  await refused({ p_cashier_token: 'malformed' });
+  await refused({ p_cashier_token: '0'.repeat(64) });
   await e.DB.prepare('UPDATE cashier_tokens SET expires_at = ? WHERE employee_id = ?').bind(new Date(Date.now() - 60_000).toISOString(), emp).run();
   await refused({ p_cashier_token: row.cashier_token });
   const [fresh] = await RPC.cashier_pin(e, device, { p_pharmacy: p, p_pin: '4821' });
