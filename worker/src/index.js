@@ -11,6 +11,7 @@ import { RPC, rpcNamed, checkPosSale, requireCashierProof, reportFeed, reminders
 import { requireRole } from './db.js';
 import { aiChat, aiInvoice } from './ai.js';
 import { payStart, payWebhook, payReady } from './pay.js';
+import { limitRequest } from './rate-limit.js';
 import { backupAll } from './backup.js';
 import { sealAll, sealBudget } from './audit-seal.js';
 import { isolateEnv, guardedFetch } from './egress.js';
@@ -160,13 +161,18 @@ async function api(req, env, url, ctx) {
   if (path === '/api/ai') return json({ data: await aiChat(env, await contextOf(env, req), limitedJson(req, 2 * 1024 * 1024), { fetchImpl: guardedFetch(env) }), error: null });
   // Subscription payments (Paymob): the checkout goes out through guardedFetch (refused on staging); the
   // webhook is Paymob's signed message, so it needs no sign-in.
-  if (path === '/api/pay/start') return json({ data: await payStart(env, await contextOf(env, req), await body(req, 10000), { fetchImpl: guardedFetch(env), site: (env.SITE_URL || url.origin).replace(/\/$/, '') }), error: null });
+  if (path === '/api/pay/start') {
+    const ctx = await contextOf(env, req);
+    await limitRequest(env, ctx.user, 'pay', 10, 15);
+    return json({ data: await payStart(env, ctx, await body(req, 10000), { fetchImpl: guardedFetch(env), site: (env.SITE_URL || url.origin).replace(/\/$/, '') }), error: null });
+  }
   if (path === '/api/pay/webhook') return json({ data: await payWebhook(env, limitedJson(req, 64 * 1024), url), error: null });
   if (path === '/api/ai/invoice') return json({ data: await aiInvoice(env, await contextOf(env, req), limitedJson(req, 8 * 1024 * 1024), { fetchImpl: guardedFetch(env) }), error: null });
   if (path === '/api/db') {
     const q = await body(req);
     const ctx = await contextOf(env, req);
     if (q.op === 'select') { const r = await select(ctx, env, q); return json(rowsJson(r.rows, r.blob)); }
+    if (['insert', 'upsert', 'update', 'delete'].includes(q.op)) await limitRequest(env, ctx.user, 'db', 600, 10);
     if (q.op === 'insert' || q.op === 'upsert') {
       // A receipt or a shift carries the cashier's PIN sign-in (cashier_token, from cashier_pin): it is
       // checked here and never stored.

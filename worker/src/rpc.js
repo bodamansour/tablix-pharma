@@ -438,9 +438,17 @@ Object.setPrototypeOf(RPC, null);
 // The function for a name taken from a request, or null.
 export const rpcNamed = (name) => (typeof name === 'string' && Object.hasOwn(RPC, name) && typeof RPC[name] === 'function' ? RPC[name] : null);
 
-// The employee a PIN belongs to; wrong PINs are counted (20 in 15 minutes and the account waits).
+// Wrong PINs count for the account (20) and pharmacy (30), both over 15 minutes.
 async function pinEmployee(env, ctx, pharmacyId, pin, wrongMessage) {
-  if ((await one(env, 'SELECT count(*) AS n FROM pin_attempts WHERE user_id = ? AND at > ?', ctx.user.id, recent(15))).n >= 20) throw new ApiError('too many attempts');
+  const key = `pin:${pharmacyId}`;
+  const limited = () => new ApiError('too many attempts; please try again later', 'over_request_rate_limit', 429);
+  const checkLimit = async () => {
+    const r = await one(env, `SELECT
+      (SELECT count(*) FROM pin_attempts WHERE user_id = ? AND at > ?) AS account,
+      (SELECT count(*) FROM auth_attempts WHERE k = ? AND at > ?) AS pharmacy`, ctx.user.id, recent(15), key, recent(15));
+    if (r.account >= 20 || r.pharmacy >= 30) throw limited();
+  };
+  await checkLimit();
   let e = null;
   if (/^\d{4,6}$/.test(String(pin))) {
     const h = await hashPin(env, pharmacyId, pin);
@@ -452,13 +460,22 @@ async function pinEmployee(env, ctx, pharmacyId, pin, wrongMessage) {
     }
   }
   if (!e) {
-    await env.DB.batch([
-      env.DB.prepare('INSERT INTO pin_attempts (user_id, at) VALUES (?, ?)').bind(ctx.user.id, nowIso()),
+    // Conditional insertion and changes() keep both failure counters consistent even when
+    // several accounts guess at the same time. Correct PINs never consume a failure slot.
+    const counted = await env.DB.batch([
+      env.DB.prepare(`INSERT INTO auth_attempts (k, at) SELECT ?, ?
+        WHERE (SELECT count(*) FROM auth_attempts WHERE k = ? AND at > ?) < 30
+        AND (SELECT count(*) FROM pin_attempts WHERE user_id = ? AND at > ?) < 20`)
+        .bind(key, nowIso(), key, recent(15), ctx.user.id, recent(15)),
+      env.DB.prepare('INSERT INTO pin_attempts (user_id, at) SELECT ?, ? WHERE changes() = 1').bind(ctx.user.id, nowIso()),
       env.DB.prepare('DELETE FROM pin_attempts WHERE at < ?').bind(recent(1440)),
+      env.DB.prepare('DELETE FROM auth_attempts WHERE k = ? AND at <= ?').bind(key, recent(15)),
     ]);
+    if (counted[0].meta.changes !== 1) throw limited();
     if (wrongMessage) throw new ApiError(wrongMessage);
     return null;
   }
+  await checkLimit();
   return e;
 }
 
