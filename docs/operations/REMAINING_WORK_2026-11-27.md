@@ -27,9 +27,13 @@ This is aggregate cron telemetry from the existing staging deployment, not a ben
 
 ## Still requires work or user resources
 
+Follow-up telemetry separated the two schedules: 48 backup invocations had CPU median 96 ms and p99 177 ms; 24 hourly sealing/reminder invocations had median 1 ms and p99 2 ms. All outcomes were `ok`. Application summaries showed all 24 seals had zero pharmacies and zero rows to seal. This is an idle sealing measurement, not a loaded sealing benchmark.
+
+The latest sampled backup-health alert checked 383 tenants and reported 20 with a good backup older than 36 hours. At five tenants every 30 minutes, a complete sweep requires 77 runs, or 38.5 hours. This patch proposes changing staging backups to every 20 minutes (about 25 hours 40 minutes for the same population). Batch size remains five; the exact schedule allowlist and isolation tests are updated together. Production schedules and `SEAL_BUDGET` are unchanged. 37 staging guard/isolation tests passed. This increases staging backup invocations from 48 to 72 per day; it is not deployed, and actual freshness must be checked after a full sweep. If the fixture population keeps growing, this fixed schedule will need revisiting. Evidence: [STAGING_CRON_2026-11-27.json](STAGING_CRON_2026-11-27.json), with no tenant identifiers.
+
 - Review/build this patch in CI, then explicitly approve the concrete merge/release. A merge touching mobile automatically triggers its main APK release workflow.
 - Test camera, offline lifecycle, account switching, updates preserving data, and notifications on a physical phone. Never uninstall to work around a signature mismatch.
-- Attribute CPU and application completion to individual seal/backup jobs before closing the dedicated sealing measurement item.
+- Run a loaded synthetic sealing benchmark and verify backup freshness after deploying the proposed staging cadence. The current idle measurement does not close that benchmark item.
 - Production Google/email configuration remains incomplete; owner confirmed no owned domain. Android Google OAuth client and signing-certificate setup remain outstanding.
 - Paymob/WhatsApp external account setup and provider tests, and the deferred Anthropic OCR activation, are not completed here.
 - Manual review/import of unknown-owner queue records, refused-shift receipt reconciliation, full snapshot validation, and Electron unavailable-OS-encryption behavior remain separate follow-ups; none is silently enabled by this patch.

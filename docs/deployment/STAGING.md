@@ -12,7 +12,7 @@ The staging resources live on the **same Cloudflare account** as production; tha
 | D1 | `saydaliti`, `3cf7edd2-1642-428b-bf1b-973f71d93529` | `saydaliti-staging`, `0ba7c0dd-645e-453e-9999-a316a828e175` (EEUR) |
 | R2 | `saydaliti-files` | `saydaliti-files-staging` |
 | Worker secrets provisioned by this workflow | — | `BACKUP_KEY` and `AUDIT_SEAL_KEY` from GitHub staging secrets, plus a staging `PIN_PEPPER` generated at deploy time |
-| Cron | `0 6 * * *`, `15 * * * *`, `30 1 * * *` | `*/30 * * * *` for backups and `15 * * * *` for audit seals |
+| Cron | `0 6 * * *`, `15 * * * *`, `30 1 * * *` | `*/20 * * * *` for backups and `15 * * * *` for audit seals |
 | Deploy credential | GitHub `CLOUDFLARE_API_TOKEN` (manual release only) | GitHub `CLOUDFLARE_STAGING_API_TOKEN` (separate token, revocable on its own; to live in the `staging` environment) |
 | Throwaway | — | D1 `saydaliti-staging-sqlcheck`, `20c6fee5-0723-4a70-b328-c58734473c1b`: used once to run the Worker's exact SQL on real D1 (synthetic rows). Can be deleted at any time; I didn't delete it without your say-so. |
 
@@ -33,7 +33,7 @@ Unrelated resources on the same account (`mosaed-cloud*` Workers, `mosaed-files*
   Without `--config`, Wrangler would prefer such a file over `worker/wrangler.toml` (reproduced with a root `wrangler.json` naming production's Worker, database and bucket).
 
 **Schedules.**
-- `[env.staging.triggers]` must hold exactly `*/30 * * * *` and `15 * * * *`.
+- `[env.staging.triggers]` must hold exactly `*/20 * * * *` and `15 * * * *`.
 - `BACKUP_CRON` must match the backup schedule, and `MORNING_CRON` must differ from it.
 - The scheduled handler returns after starting backups. The hourly schedule runs audit sealing. Staging strips outside service credentials and permits outbound requests only to Google's public signing keys.
 
@@ -42,7 +42,7 @@ Unrelated resources on the same account (`mosaed-cloud*` Workers, `mosaed-files*
 | `config` (no credentials) | `[env.staging]` must name Worker `tablix-staging` with `workers_dev` only and no routes, D1 `saydaliti-staging`, R2 `saydaliti-files-staging`, the staging `SITE_URL` and the approved staging Google Client ID. The guard refuses production identifiers, preview IDs and unreviewed bindings. |
 | `remote` (read-only, before any write) | • The token is active (its expiry is printed; a warning if it has none).<br>• The token sees **exactly one** account, and it is `CLOUDFLARE_STAGING_ACCOUNT_ID`. D1 UUIDs are globally unique, so finding the staging UUID there pins the account.<br>• The account in `CLOUDFLARE_STAGING_ACCOUNT_ID` holds D1 `0ba7c0dd-…` named `saydaliti-staging` and the bucket `saydaliti-files-staging`.<br>• Wrangler resolves the `DB` binding to that same UUID.<br>• It then writes a marker for this commit (no secrets in it). |
 | `run -- <args>` (every Wrangler call) | Rechecks `wrangler.toml` and adds `--env staging`. The allowlist permits only the reviewed operations in `worker/scripts/staging-guard.mjs`. The exact write forms are `deploy`, `d1 migrations apply DB --remote`, and `secret put` for `BACKUP_KEY`, `PIN_PEPPER` or `AUDIT_SEAL_KEY`. Writes require the `remote` check on the same commit. |
-| `schedules` | Reads the staging Worker's cron schedules and requires both `*/30 * * * *` and `15 * * * *`. |
+| `schedules` | Reads the staging Worker's cron schedules and requires both `*/20 * * * *` and `15 * * * *`. |
 
 The guard never reads the production token, and it never sends a request about a production resource.
 

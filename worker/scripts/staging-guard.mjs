@@ -43,7 +43,7 @@ export const STAGING = Object.freeze({
   dbName: 'saydaliti-staging',
   dbId: '0ba7c0dd-645e-453e-9999-a316a828e175',
   bucket: 'saydaliti-files-staging',
-  cron: '*/30 * * * *',
+  cron: '*/20 * * * *',
   sealCron: '15 * * * *',
   urlHost: /^https:\/\/tablix-staging\.[a-z0-9-]+\.workers\.dev$/,
   googleClientId: '184002310002-ldg2gjnsku0s2uc24q5v0tol1379kldg.apps.googleusercontent.com',

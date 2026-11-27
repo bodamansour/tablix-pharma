@@ -93,7 +93,7 @@ test('the Worker itself: a staging cron with WhatsApp credentials set makes no o
   const logs = console.log; console.log = () => {};
   try {
     const { default: worker } = await import('../worker/src/index.js');
-    for (const cron of ['15 * * * *', '0 6 * * *', '*/30 * * * *']) {
+    for (const cron of ['15 * * * *', '0 6 * * *', '*/20 * * * *']) {
       const waits = [];
       await worker.scheduled({ cron }, { ...STAGING_ENV }, { waitUntil: (p) => waits.push(p) });
       await Promise.allSettled(waits);
