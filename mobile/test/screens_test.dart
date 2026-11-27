@@ -41,6 +41,8 @@ AppState loaded({bool empty = false, Api? api}) {
     ..member = member
     ..raw = raw;
   s.email = 'owner@example.com';
+  s.userId = 'test-owner';
+  s.api.token ??= 'test-session';
   s.phase = Phase.ready;
   s.view = buildView(member, raw, 'all', DateTime.fromMillisecondsSinceEpoch(sc['now'] as int));
   s.loadedAt = DateTime(2026, 11, 10, 18, 30);
@@ -164,6 +166,8 @@ void main() {
       return http.Response(jsonEncode({'data': null}), 200);
     }));
     final box = Outbox(api);
+    api.token = 'test-session';
+    await box.open('test-owner');
     await box.add([
       Pending.insert('catalog_items', {'id': 'a'}),
       const Pending.insert('bad', {'id': 'b'}),
@@ -172,7 +176,7 @@ void main() {
     await box.send();
     expect(box.length, 3, reason: 'nothing is lost with no connection');
     final again = Outbox(api);
-    await again.load();
+    await again.open('test-owner');
     expect(again.length, 3, reason: 'the queue survives closing the app');
     mode = 'online';
     await again.send();

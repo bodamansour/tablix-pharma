@@ -116,10 +116,14 @@ const note = (env, k) => env.DB.batch([
   env.DB.prepare('DELETE FROM auth_attempts WHERE at < ?').bind(new Date(Date.now() - 86400000).toISOString()),
 ]);
 
-async function newSession(env, user) {
+async function newSession(env, user, expectedHash) {
   const token = randomHex(32);
   const expires = new Date(Date.now() + SESSION_DAYS * 86400000).toISOString();
-  await env.DB.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)').bind(await sha256(token), user.id, nowIso(), expires).run();
+  const args = [await sha256(token), user.id, nowIso(), expires];
+  const result = expectedHash === undefined
+    ? await env.DB.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)').bind(...args).run()
+    : await env.DB.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND pw_hash = ?)').bind(...args, user.id, expectedHash).run();
+  if (result.meta.changes !== 1) throw new ApiError('Invalid login credentials', 'invalid_credentials', 400);
   return { access_token: token, expires_at: expires, user: { id: user.id, email: user.email } };
 }
 
@@ -133,8 +137,10 @@ export async function signUp(env, { email, password }, ip) {
   await note(env, `up:${ip}`);
   if (await env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first()) throw new ApiError('User already registered', 'user_already_exists', 422);
   const user = { id: uuid(), email };
-  await env.DB.prepare('INSERT INTO users (id, email, pw_hash, created_at) VALUES (?, ?, ?, ?)').bind(user.id, email, await hashPassword(password, env), nowIso()).run();
-  return newSession(env, user);
+  const pwHash = await hashPassword(password, env);
+  const inserted = await env.DB.prepare('INSERT OR IGNORE INTO users (id, email, pw_hash, created_at) VALUES (?, ?, ?, ?)').bind(user.id, email, pwHash, nowIso()).run();
+  if (inserted.meta.changes !== 1) throw new ApiError('User already registered', 'user_already_exists', 422);
+  return newSession(env, user, pwHash);
 }
 
 export async function signIn(env, { email, password, code }, ip) {
@@ -156,8 +162,13 @@ export async function signIn(env, { email, password, code }, ip) {
       throw new ApiError('Wrong two-step code', 'mfa_invalid', 400);
     }
   }
-  if (!u.pw_hash.startsWith(`pbkdf2$${iterOf(env)}$`)) await env.DB.prepare('UPDATE users SET pw_hash = ? WHERE id = ?').bind(await hashPassword(password, env), u.id).run();
-  return newSession(env, u);
+  let expectedHash = u.pw_hash;
+  if (!u.pw_hash.startsWith(`pbkdf2$${iterOf(env)}$`)) {
+    expectedHash = await hashPassword(passwordText, env);
+    const updated = await env.DB.prepare('UPDATE users SET pw_hash = ? WHERE id = ? AND pw_hash = ?').bind(expectedHash, u.id, u.pw_hash).run();
+    if (updated.meta.changes !== 1) throw new ApiError('Invalid login credentials', 'invalid_credentials', 400);
+  }
+  return newSession(env, u, expectedHash);
 }
 
 export async function signInWithGoogle(env, { credential, code }, ip, fetchImpl) {
@@ -222,11 +233,17 @@ export async function changePassword(env, user, { password, current_password }, 
     throw new ApiError('Current password is wrong', 'invalid_credentials', 400);
   }
   await acceptAttempt(env, attempt);
-  await env.DB.batch([
-    env.DB.prepare('UPDATE users SET pw_hash = ? WHERE id = ?').bind(await hashPassword(password, env), user.id),
-    env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id),
+  const pwHash = await hashPassword(password, env), token = randomHex(32);
+  const expires = new Date(Date.now() + SESSION_DAYS * 86400000).toISOString();
+  // One transaction: a stale password check cannot overwrite a concurrent reset,
+  // revoke its new sessions, or issue a session using the obsolete credential.
+  const results = await env.DB.batch([
+    env.DB.prepare('UPDATE users SET pw_hash = ? WHERE id = ? AND pw_hash = ?').bind(pwHash, user.id, u.pw_hash),
+    env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND EXISTS (SELECT 1 FROM users WHERE id = ? AND pw_hash = ?)').bind(user.id, user.id, pwHash),
+    env.DB.prepare('INSERT INTO sessions (token_hash, user_id, created_at, expires_at) SELECT ?, ?, ?, ? WHERE EXISTS (SELECT 1 FROM users WHERE id = ? AND pw_hash = ?)').bind(await sha256(token), user.id, nowIso(), expires, user.id, pwHash),
   ]);
-  return newSession(env, user);
+  if (results[0].meta.changes !== 1 || results[2].meta.changes !== 1) throw new ApiError('Current password is wrong', 'invalid_credentials', 400);
+  return { access_token: token, expires_at: expires, user: { id: user.id, email: user.email } };
 }
 
 // ---------- Two-step sign-in (authenticator app) ----------

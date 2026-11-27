@@ -1,0 +1,34 @@
+{
+  "start": "2026-11-26T10:43:43.432Z",
+  "end": "2026-11-27T10:43:43.432Z",
+  "units": "microseconds",
+  "result": {
+    "data": {
+      "viewer": {
+        "accounts": [
+          {
+            "workersInvocationsAdaptive": [
+              {
+                "dimensions": {
+                  "eventType": "cron",
+                  "scriptName": "tablix-staging",
+                  "scriptVersion": "1164ae55-24f3-421a-a4ed-796a86129b97",
+                  "status": "success"
+                },
+                "quantiles": {
+                  "cpuTimeP50": 80947,
+                  "cpuTimeP99": 177154
+                },
+                "sum": {
+                  "errors": 0,
+                  "requests": 72
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "errors": null
+  }
+}

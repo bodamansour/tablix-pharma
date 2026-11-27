@@ -104,14 +104,15 @@ jobs:
       # The key comes from three repository secrets (see README, "مفتاح توقيع أبلكيشن أندرويد").
       # Without them every build gets a throwaway key, so each update needs an uninstall first.
       - name: Sign with the app key
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           KS_PASS: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KS_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
         run: |
           if [ -z "$KS_B64" ] || [ -z "$KS_PASS" ] || [ -z "$KS_ALIAS" ]; then
-            echo "::warning::No app signing key in the repository secrets yet, so this APK will not install over an older version (uninstall first). See README."
-            exit 0
+            echo "::error::Release signing is not configured. Refusing to publish an APK that requires uninstalling and losing offline work."
+            exit 1
           fi
           echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/app.jks"
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
@@ -129,7 +130,7 @@ jobs:
           path: tablix-pharma.apk
 
       - name: Publish on the android-latest release
-        if: github.event_name != 'pull_request'
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2 (v2.6.2)
         with:
           tag_name: android-latest
