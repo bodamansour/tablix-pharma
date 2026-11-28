@@ -33,7 +33,7 @@ test('staging runs backup and hourly sealing with the existing budget; productio
   assert.match(prod, /^SEAL_BUDGET = "150"$/m);
   assert.match(stagingPart, /^SEAL_BUDGET = "150"$/m);
   assert.match(prod, /^crons = \["0 6 \* \* \*", "15 \* \* \* \*", "30 1 \* \* \*"\]$/m);
-  assert.match(stagingPart, /^crons = \["\*\/30 \* \* \* \*", "15 \* \* \* \*"\]$/m);
+  assert.match(stagingPart, /^crons = \["\*\/20 \* \* \* \*", "15 \* \* \* \*"\]$/m);
 });
 
 test('the staging workflow: staging credentials only, protected, guarded, never from a pull request', () => {

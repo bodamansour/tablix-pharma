@@ -22,6 +22,23 @@ class AppState extends ChangeNotifier {
   late final Outbox outbox;
   int get pending => outbox.length;
   List<Refused> get refused => outbox.refused;
+  int get legacyPending => outbox.legacyCount;
+  bool get queueBlocked => outbox.blocked;
+  Future<void>? _queueReady, _refreshing;
+  bool _switching = false;
+  int _generation = 0;
+
+  Future<void> _ensureQueue() => _queueReady ??= outbox.open(userId);
+
+  Future<void> _pauseAccount() async {
+    if (_switching) throw const ApiError('تغيير الحساب جارٍ. انتظر لحظة.', status: 409);
+    _switching = true;
+    _generation++;
+    try { await _queueReady; } catch (_) {}
+    await outbox.detach();
+    await _refreshing;
+    _queueReady = null;
+  }
 
   /// The owner and the stock keeper count stock and receive goods (the server checks it too).
   bool get canStock => const ['owner', 'stock'].contains(member?.role);
@@ -55,7 +72,6 @@ class AppState extends ChangeNotifier {
     final p = await SharedPreferences.getInstance();
     themeMode = ThemeMode.values.firstWhere((m) => m.name == p.getString(_kTheme), orElse: () => ThemeMode.system);
     branch = p.getString(_kBranch) ?? 'all';
-    await outbox.load();
     await alerts.load();
     final s = await api.restore();
     if (s == null) {
@@ -69,13 +85,19 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> signIn(String email, String password, {String? code}) async {
-    final s = await api.signIn(email, password, code: code);
-    this.email = s.email;
-    userId = s.userId;
+    await _pauseAccount();
+    try {
+      final s = await api.signIn(email, password, code: code);
+      this.email = s.email;
+      userId = s.userId;
+    } finally {
+      _switching = false;
+    }
     await _open();
   }
 
   Future<void> _open() async {
+    await _ensureQueue();
     phase = Phase.ready;
     view = null;
     notifyListeners();
@@ -97,9 +119,8 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> signOut() async {
-    // What wasn't sent belongs to this account's pharmacy; it is not sent later under another account.
-    outbox.items = [];
-    await outbox.add(const []);
+    // Preserve unsent rows for this account; wait before changing the API token.
+    await _pauseAccount();
     await api.signOut();
     await repo.forget(userId);
     fromSaved = false;
@@ -108,12 +129,18 @@ class AppState extends ChangeNotifier {
       ..raw = null;
     view = null;
     error = null;
+    userId = '';
+    email = '';
+    _switching = false;
     phase = Phase.signedOut;
     notifyListeners();
   }
 
   /// Loads everything again from the server and works out the numbers.
-  Future<void> refresh() async {
+  Future<void> refresh() => _refreshing ??= _refresh().whenComplete(() => _refreshing = null);
+
+  Future<void> _refresh() async {
+    if (_switching) return;
     if (loading) return;
     loading = true;
     error = null;
@@ -137,7 +164,16 @@ class AppState extends ChangeNotifier {
       alerts.schedule(view?.analysis); // tomorrow morning's notification, with these numbers
     } on ApiError catch (e) {
       if (e.signedOut) {
+        _generation++;
+        await outbox.detach();
+        _queueReady = null;
         await api.forget();
+        userId = '';
+        email = '';
+        view = null;
+        repo
+          ..member = null
+          ..raw = null;
         phase = Phase.signedOut;
       } else if (e.status == 404 && e.message == 'no pharmacy') {
         phase = Phase.noPharmacy;
@@ -154,7 +190,12 @@ class AppState extends ChangeNotifier {
 
   /// Saves rows made on the phone: they show at once, and go to the server now or when the connection is back.
   Future<void> write(List<Pending> entries) async {
+    if (_switching || userId.isEmpty) throw const ApiError('not signed in', status: 401);
+    final generation = _generation;
+    await _ensureQueue();
+    if (_switching || generation != _generation) throw const ApiError('not signed in', status: 401);
     await outbox.add(entries);
+    if (generation != _generation) return;
     _applyLocal(entries);
     if (repo.member != null && repo.raw != null) {
       view = await repo.view(branch);
@@ -166,6 +207,8 @@ class AppState extends ChangeNotifier {
 
   /// Sales can wait for the connection. A refund needs server confirmation before money is handed back.
   Future<bool> sell(Map<String, dynamic> sale) async {
+    if (_switching || userId.isEmpty) throw const ApiError('not signed in', status: 401);
+    final generation = _generation;
     final m = member!;
     final now = DateTime.now();
     final prefix = receiptPrefix(now, await receipts.device());
@@ -186,13 +229,16 @@ class AppState extends ChangeNotifier {
       'created_by': userId,
     };
     lastReceipt = '${row['number']}';
+    if (_switching || generation != _generation) throw const ApiError('not signed in', status: 401);
     try {
       await api.insert('pos_sales', [row]);
     } on ApiError catch (e) {
+      if (_switching || generation != _generation) throw const ApiError('not signed in', status: 401);
       if (sale['kind'] == 'return' || !(e.offline || e.status == 429 || e.status >= 500)) rethrow;
       await write([Pending.insert('pos_sales', row)]);
       return false;
     }
+    if (generation != _generation) return true;
     _applyLocal([Pending.insert('pos_sales', row)]);
     if (repo.raw != null) {
       view = await repo.view(branch);
@@ -207,6 +253,9 @@ class AppState extends ChangeNotifier {
 
   /// Sends what is waiting; a no-op when there is nothing.
   Future<void> sync() async {
+    if (_switching || userId.isEmpty) return;
+    await _ensureQueue();
+    if (_switching) return;
     if (outbox.length == 0) return;
     final before = (outbox.length, outbox.refused.length);
     try {
@@ -217,8 +266,8 @@ class AppState extends ChangeNotifier {
     if ((outbox.length, outbox.refused.length) != before) notifyListeners();
   }
 
-  void dismissRefused(Refused r) {
-    outbox.refused.remove(r);
+  Future<void> dismissRefused(Refused r) async {
+    await outbox.dismiss(r);
     notifyListeners();
   }
 

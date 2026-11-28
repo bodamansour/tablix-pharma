@@ -60,8 +60,9 @@ workers_dev = true
 # AI) and refuses outbound requests from the scheduled jobs, so staging can never message a real patient.
 DEPLOY_ENV = "staging"
 MORNING_CRON = "0 6 * * *"
-# Backups every 30 minutes on staging, so the schedule can be observed (production: daily at 01:30 UTC).
-BACKUP_CRON = "*/30 * * * *"
+# Five tenants every 20 minutes: the observed 383 staging tenants fit within the 36-hour freshness window.
+# Production remains daily at 01:30 UTC; sealing remains hourly and SEAL_BUDGET is unchanged.
+BACKUP_CRON = "*/20 * * * *"
 PBKDF2_ITER = "10000"
 SITE_URL = "https://tablix-staging.tablixpharma.workers.dev"
 GOOGLE_CLIENT_ID = "184002310002-ldg2gjnsku0s2uc24q5v0tol1379kldg.apps.googleusercontent.com"
@@ -82,7 +83,7 @@ bucket_name = "saydaliti-files-staging"
 
 [env.staging.triggers]
 # Backups and hourly audit sealing on synthetic staging data; egress stays blocked.
-crons = ["*/30 * * * *", "15 * * * *"]
+crons = ["*/20 * * * *", "15 * * * *"]
 
 [env.staging.observability]
 enabled = true

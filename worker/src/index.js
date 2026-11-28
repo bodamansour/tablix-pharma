@@ -118,7 +118,7 @@ async function api(req, env, url, ctx) {
     if (what === 'signin') return signedIn(req, await signIn(env, await body(req, 10000), ip));
     if (what === 'google') return signedIn(req, await signInWithGoogle(env, await body(req, 16000), ip, guardedFetch(env)));
     if (what === 'google/link') { const u = await userOf(env, req); if (!u) throw new ApiError('not signed in', '42501', 401); return json({ data: await linkGoogle(env, u, await body(req, 16000), ip, guardedFetch(env)), error: null }); }
-    if (what === 'signout') { const u = await userOf(env, req).catch(() => null); await signOut(env, u?.token); const r = json({ data: null, error: null }); r.headers.append('Set-Cookie', clearCookie()); return r; }
+    if (what === 'signout') { const u = await userOf(env, req); await signOut(env, u?.token); const r = json({ data: null, error: null }); r.headers.append('Set-Cookie', clearCookie()); return r; }
     // An app that still keeps its token in the page's storage (from before the cookie): the same session moves into the cookie.
     if (what === 'adopt') { const u = await userOf(env, req); if (!u || u.via !== 'bearer') throw new ApiError('not signed in', '42501', 401); return signedIn(req, { access_token: u.token, expires_at: u.expires_at, user: { id: u.id, email: u.email } }); }
     if (what === 'forgot') return json({ data: await forgotPassword(env, await body(req, 10000), ip, url.origin, ctx?.waitUntil ? (p) => ctx.waitUntil(p) : null), error: null });

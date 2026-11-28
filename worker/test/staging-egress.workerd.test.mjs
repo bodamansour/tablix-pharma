@@ -24,7 +24,7 @@ const skip = !tools && 'worker tools not installed (run npm ci in worker/)';
 
 const FAKE_OUTSIDE = { ANTHROPIC_API_KEY: 'fake-anthropic-not-real', AI_MODEL: 'x', WHATSAPP_TOKEN: 'fake-wa-not-real', WHATSAPP_PHONE_ID: '1', NEW_VENDOR_API_KEY: 'fake-new-not-real' };
 const COMMON = { MORNING_CRON: '0 6 * * *', PBKDF2_ITER: '1000', SIGNUP_PER_HOUR: '10000', PIN_PEPPER: 'test-pepper-not-real', ...FAKE_OUTSIDE };
-const STAGING_VARS = { ...COMMON, DEPLOY_ENV: 'staging', BACKUP_CRON: '*/30 * * * *', SITE_URL: 'https://tablix-staging.tablixpharma.workers.dev' };
+const STAGING_VARS = { ...COMMON, DEPLOY_ENV: 'staging', BACKUP_CRON: '*/20 * * * *', SITE_URL: 'https://tablix-staging.tablixpharma.workers.dev' };
 const PROD_VARS = { ...COMMON, SITE_URL: 'https://tablix.tablixpharma.workers.dev' };
 const PROBES = ['https://egress-probe.invalid/https', 'http://egress-probe.invalid/http', 'http://203.0.113.7/ip'];
 
@@ -122,7 +122,7 @@ test('staging, in workerd: /api/ai with a fake key set makes no outside request;
     const g = (await call('/__probe/global-fetch')).body;
     for (const u of PROBES) assert.equal(g[u], 403, `${u}: ${g[u]}`);
     const w = await mf.getWorker();
-    for (const cron of ['15 * * * *', '0 6 * * *', '*/30 * * * *']) await w.scheduled({ cron });
+    for (const cron of ['15 * * * *', '0 6 * * *', '*/20 * * * *']) await w.scheduled({ cron });
     assert.deepEqual(outbound, [], 'nothing left the staging Worker');
   } finally { await mf.dispose(); }
 });

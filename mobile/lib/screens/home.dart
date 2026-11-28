@@ -231,7 +231,7 @@ class _Menu extends StatelessWidget {
             builder: (ctx) => AlertDialog(
               title: const Text('تخرج من الحساب؟'),
               content: Text('هتحتاج تدخل بالإيميل وكلمة السر تاني على الموبايل ده.\n${s.email}'
-                  '${s.pending > 0 ? '\n\nفيه ${s.pending} حاجة لسه متبعتتش للسيرفر، وهتتمسح لو خرجت دلوقتي.' : ''}'),
+                  '${s.pending > 0 ? '\n\nفيه ${s.pending} حاجة لسه متبعتتش. هتفضل محفوظة للحساب ده لحد ما تدخل بيه تاني.' : ''}'),
               actions: [
                 TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('رجوع')),
                 FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('خروج')),

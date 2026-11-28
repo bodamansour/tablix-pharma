@@ -49,6 +49,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ListTile(leading: const Icon(Icons.alternate_email), title: Text(s.email, textDirection: TextDirection.ltr)),
           ]),
         ),
+        if (s.legacyPending > 0 || s.queueBlocked) ...[
+          const SectionTitle('عمليات محفوظة للمراجعة'),
+          Notice(s.queueBlocked
+              ? 'ملف المزامنة محتاج مراجعة. وقفنا الإرسال وحفظنا البيانات كما هي.'
+              : '${s.legacyPending} عملية قديمة محفوظة على الجهاز. حسابها الأصلي غير معروف، لذلك لن تُرسل أو تُنسب للحساب الحالي.', tone: Tone.warn),
+        ],
         const SectionTitle('الألوان'),
         SegmentedButton<ThemeMode>(
           segments: [for (final e in themes.entries) ButtonSegment(value: e.key, label: Text(e.value))],

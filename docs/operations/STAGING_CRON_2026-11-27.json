@@ -1,0 +1,136 @@
+{
+  "from": "2026-11-26T10:47:58.869Z",
+  "to": "2026-11-27T10:47:58.869Z",
+  "success": true,
+  "errors": [],
+  "calculations": [
+    {
+      "alias": "samples",
+      "calculation": "count",
+      "aggregates": [
+        {
+          "groups": [
+            {
+              "key": "$workers.event.cron",
+              "value": "*/30 * * * *"
+            },
+            {
+              "key": "$workers.outcome",
+              "value": "ok"
+            }
+          ],
+          "groupKey": "*/30 * * * * ⬤ ok",
+          "value": 48,
+          "interval": 1,
+          "sampleInterval": 1,
+          "count": 48
+        },
+        {
+          "groups": [
+            {
+              "key": "$workers.event.cron",
+              "value": "15 * * * *"
+            },
+            {
+              "key": "$workers.outcome",
+              "value": "ok"
+            }
+          ],
+          "groupKey": "15 * * * * ⬤ ok",
+          "value": 24,
+          "interval": 1,
+          "sampleInterval": 1,
+          "count": 24
+        }
+      ]
+    },
+    {
+      "alias": "cpuP50Ms",
+      "calculation": "median($workers.cpuTimeMs)",
+      "aggregates": [
+        {
+          "groups": [
+            {
+              "key": "$workers.event.cron",
+              "value": "*/30 * * * *"
+            },
+            {
+              "key": "$workers.outcome",
+              "value": "ok"
+            }
+          ],
+          "groupKey": "*/30 * * * * ⬤ ok",
+          "value": 96,
+          "interval": 1,
+          "sampleInterval": 1,
+          "count": 48
+        },
+        {
+          "groups": [
+            {
+              "key": "$workers.event.cron",
+              "value": "15 * * * *"
+            },
+            {
+              "key": "$workers.outcome",
+              "value": "ok"
+            }
+          ],
+          "groupKey": "15 * * * * ⬤ ok",
+          "value": 1,
+          "interval": 1,
+          "sampleInterval": 1,
+          "count": 24
+        }
+      ]
+    },
+    {
+      "alias": "cpuP99Ms",
+      "calculation": "p99($workers.cpuTimeMs)",
+      "aggregates": [
+        {
+          "groups": [
+            {
+              "key": "$workers.event.cron",
+              "value": "*/30 * * * *"
+            },
+            {
+              "key": "$workers.outcome",
+              "value": "ok"
+            }
+          ],
+          "groupKey": "*/30 * * * * ⬤ ok",
+          "value": 177,
+          "interval": 1,
+          "sampleInterval": 1,
+          "count": 48
+        },
+        {
+          "groups": [
+            {
+              "key": "$workers.event.cron",
+              "value": "15 * * * *"
+            },
+            {
+              "key": "$workers.outcome",
+              "value": "ok"
+            }
+          ],
+          "groupKey": "15 * * * * ⬤ ok",
+          "value": 2,
+          "interval": 1,
+          "sampleInterval": 1,
+          "count": 24
+        }
+      ]
+    }
+  ],
+  "backupHealth": {
+    "success": true,
+    "timestamp": 1795775439302,
+    "checked": 383,
+    "problemCounts": {
+      "last good backup too old": 20
+    }
+  }
+}

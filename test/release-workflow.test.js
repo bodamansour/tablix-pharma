@@ -8,6 +8,16 @@ import { execFileSync } from 'node:child_process';
 const wf = readFileSync(new URL('../.github/workflows/cloudflare.yml', import.meta.url), 'utf8');
 const onBlock = wf.split(/^on:\s*$/m)[1].split(/^\S/m)[0];
 
+test('Android PRs cannot use release signing keys and missing signing blocks publication', () => {
+  const android = readFileSync(new URL('../.github/workflows/android.yml', import.meta.url), 'utf8');
+  const signing = android.split('- name: Sign with the app key')[1].split('- name: Keep the APK')[0];
+  const publishing = android.split('- name: Publish on the android-latest release')[1];
+  for (const step of [signing, publishing]) assert.match(step, /if: github.event_name != 'pull_request' && github.ref == 'refs\/heads\/main'/);
+  const missingKeys = signing.split('if [ -z "$KS_B64" ]')[1].split(/\n\s*fi\s*\n/)[0];
+  assert.match(missingKeys, /exit 1/);
+  assert.doesNotMatch(missingKeys, /exit 0/);
+});
+
 test('the production release runs only by hand (no push, pull request or schedule)', () => {
   assert.match(onBlock, /^\s{2}workflow_dispatch:/m);
   for (const t of ['push', 'pull_request', 'pull_request_target', 'schedule', 'workflow_run', 'release']) {
